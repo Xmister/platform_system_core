@@ -298,6 +298,8 @@ void service_start(struct service *svc, const char *dynamic_args)
         if (needs_console) {
             setsid();
             open_console();
+            /* Try to take, but don't steal, controlling tty */
+            ioctl(0, TIOCSCTTY, 0);
         } else {
             zap_stdio();
         }
