@@ -597,12 +597,16 @@ static inline int native_window_set_usage(
 /* deprecated. Always returns 0. Don't call. */
 static inline int native_window_connect(
         struct ANativeWindow* window, int api) {
+    (void)window;
+    (void)api;
     return 0;
 }
 
 /* deprecated. Always returns 0. Don't call. */
 static inline int native_window_disconnect(
         struct ANativeWindow* window, int api) {
+    (void)window;
+    (void)api;
     return 0;
 }
 
