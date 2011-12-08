@@ -122,6 +122,7 @@ void *load_file(const char *fn, unsigned *_sz)
     char *data;
     int sz;
     int fd;
+    int errno_tmp;
 
     data = 0;
     fd = open(fn, O_RDONLY);
@@ -142,8 +143,10 @@ void *load_file(const char *fn, unsigned *_sz)
     return data;
 
 oops:
+    errno_tmp = errno;
     close(fd);
     if(data != 0) free(data);
+    errno = errno_tmp;
     return 0;
 }
 #endif
@@ -262,7 +265,7 @@ void *load_bootable_image(unsigned page_size, const char *kernel, const char *ra
 
     kdata = load_file(kernel, &ksize);
     if(kdata == 0) {
-        fprintf(stderr, "cannot load '%s'\n", kernel);
+        fprintf(stderr, "cannot load '%s': %s\n", kernel, strerror(errno));
         return 0;
     }
 
@@ -282,7 +285,7 @@ void *load_bootable_image(unsigned page_size, const char *kernel, const char *ra
     if(ramdisk) {
         rdata = load_file(ramdisk, &rsize);
         if(rdata == 0) {
-            fprintf(stderr,"cannot load '%s'\n", ramdisk);
+            fprintf(stderr,"cannot load '%s': %s\n", ramdisk, strerror(errno));
             return  0;
         }
     }
@@ -452,7 +455,7 @@ void do_update(char *fn)
     fb_queue_query_save("product", cur_product, sizeof(cur_product));
 
     zdata = load_file(fn, &zsize);
-    if (zdata == 0) die("failed to load '%s'", fn);
+    if (zdata == 0) die("failed to load '%s': %s", fn, strerror(errno));
 
     zip = init_zipfile(zdata, zsize);
     if(zip == 0) die("failed to access zipdata in '%s'");
@@ -522,12 +525,12 @@ void do_flashall(void)
     fname = find_item("info", product);
     if (fname == 0) die("cannot find android-info.txt");
     data = load_file(fname, &sz);
-    if (data == 0) die("could not load android-info.txt");
+    if (data == 0) die("could not load android-info.txt: %s", strerror(errno));
     setup_requirements(data, sz);
 
     fname = find_item("boot", product);
     data = load_file(fname, &sz);
-    if (data == 0) die("could not load boot.img");
+    if (data == 0) die("could not load boot.img: %s", strerror(errno));
     do_send_signature(fname);
     fb_queue_flash("boot", data, sz);
 
@@ -540,7 +543,7 @@ void do_flashall(void)
 
     fname = find_item("system", product);
     data = load_file(fname, &sz);
-    if (data == 0) die("could not load system.img");
+    if (data == 0) die("could not load system.img: %s", strerror(errno));
     do_send_signature(fname);
     fb_queue_flash("system", data, sz);
 }
@@ -645,7 +648,7 @@ int main(int argc, char **argv)
         } else if(!strcmp(*argv, "signature")) {
             require(2);
             data = load_file(argv[1], &sz);
-            if (data == 0) die("could not load '%s'", argv[1]);
+            if (data == 0) die("could not load '%s': %s", argv[1], strerror(errno));
             if (sz != 256) die("signature must be 256 bytes");
             fb_queue_download("signature", data, sz);
             fb_queue_command("signature", "installing signature");
@@ -688,7 +691,7 @@ int main(int argc, char **argv)
             }
             if (fname == 0) die("cannot determine image filename for '%s'", pname);
             data = load_file(fname, &sz);
-            if (data == 0) die("cannot load '%s'\n", fname);
+            if (data == 0) die("cannot load '%s': %s\n", fname, strerror(errno));
             fb_queue_flash(pname, data, sz);
         } else if(!strcmp(*argv, "flash:raw")) {
             char *pname = argv[1];
