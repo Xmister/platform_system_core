@@ -15,7 +15,6 @@
  */
 
 //#define DEBUG_UEVENTS
-#define CHARGER_KLOG_LEVEL 6
 
 #include <dirent.h>
 #include <errno.h>
@@ -40,6 +39,7 @@
 #include <cutils/list.h>
 #include <cutils/misc.h>
 #include <cutils/uevent.h>
+#include <charger/charger.h>
 
 #ifdef CHARGER_ENABLE_SUSPEND
 #include <suspend/autosuspend.h>
@@ -59,10 +59,6 @@
 
 #define MSEC_PER_SEC            (1000LL)
 #define NSEC_PER_MSEC           (1000000LL)
-
-#define BATTERY_UNKNOWN_TIME    (2 * MSEC_PER_SEC)
-#define POWER_ON_KEY_TIME       (2 * MSEC_PER_SEC)
-#define UNPLUGGED_SHUTDOWN_TIME (10 * MSEC_PER_SEC)
 
 #define BATTERY_FULL_THRESH     95
 
@@ -103,6 +99,7 @@ struct animation {
     struct frame *frames;
     int cur_frame;
     int num_frames;
+    int allocated_frames;
 
     int cur_cycle;
     int num_cycles;
@@ -115,6 +112,7 @@ struct charger {
     int64_t next_screen_transition;
     int64_t next_key_check;
     int64_t next_pwr_check;
+    int64_t next_cap_check;
 
     struct key_state keys[KEY_MAX + 1];
     int uevent_fd;
@@ -127,6 +125,14 @@ struct charger {
     gr_surface surf_unknown;
 
     struct power_supply *battery;
+
+    int min_charge;
+    enum charger_exit_state state;
+
+    int64_t power_key_ms;
+    int64_t batt_unknown_ms;
+    int64_t unplug_shutdown_ms;
+    int64_t cap_poll_ms;
 };
 
 struct uevent {
@@ -136,6 +142,7 @@ struct uevent {
     const char *ps_name;
     const char *ps_type;
     const char *ps_online;
+    const char *ps_capacity;
 };
 
 /* Needed by minui */
@@ -276,6 +283,18 @@ err:
     return -1;
 }
 
+static void kick_animation(struct animation *anim)
+{
+    anim->run = true;
+}
+
+static void reset_animation(struct animation *anim)
+{
+    anim->cur_cycle = 0;
+    anim->cur_frame = 0;
+    anim->run = false;
+}
+
 static int read_file_int(const char *path, int *val)
 {
     char buf[32];
@@ -308,9 +327,11 @@ static int get_battery_capacity(struct charger *charger)
         return -1;
 
     ret = read_file_int(charger->battery->cap_path, &batt_cap);
-    if (ret < 0 || batt_cap > 100) {
-        batt_cap = -1;
-    }
+    if (ret < 0 )
+        return -1;
+
+    if (batt_cap > 100)
+        batt_cap = 100;
 
     return batt_cap;
 }
@@ -382,6 +403,7 @@ static void parse_uevent(const char *msg, struct uevent *uevent)
     uevent->ps_name = "";
     uevent->ps_online = "";
     uevent->ps_type = "";
+    uevent->ps_capacity = "";
 
     /* currently ignoring SEQNUM */
     while (*msg) {
@@ -406,6 +428,9 @@ static void parse_uevent(const char *msg, struct uevent *uevent)
         } else if (!strncmp(msg, "POWER_SUPPLY_TYPE=", 18)) {
             msg += 18;
             uevent->ps_type = msg;
+        } else if (!strncmp(msg, "POWER_SUPPLY_CAPACITY=", 22)) {
+            msg += 22;
+            uevent->ps_capacity = msg;
         }
 
         /* advance to after the next \0 */
@@ -413,9 +438,10 @@ static void parse_uevent(const char *msg, struct uevent *uevent)
             ;
     }
 
-    LOGV("event { '%s', '%s', '%s', '%s', '%s', '%s' }\n",
+    LOGV("event { '%s', '%s', '%s', '%s', '%s', '%s', '%s' }\n",
          uevent->action, uevent->path, uevent->subsystem,
-         uevent->ps_name, uevent->ps_type, uevent->ps_online);
+         uevent->ps_name, uevent->ps_type, uevent->ps_online,
+         uevent->ps_capacity);
 }
 
 static void process_ps_uevent(struct charger *charger, struct uevent *uevent)
@@ -423,9 +449,9 @@ static void process_ps_uevent(struct charger *charger, struct uevent *uevent)
     int online;
     char ps_type[32];
     struct power_supply *supply = NULL;
-    int i;
     bool was_online = false;
     bool battery = false;
+    int old_supplies_online = charger->num_supplies_online;
 
     if (uevent->ps_type[0] == '\0') {
         char *path;
@@ -444,7 +470,7 @@ static void process_ps_uevent(struct charger *charger, struct uevent *uevent)
         strlcpy(ps_type, uevent->ps_type, sizeof(ps_type));
     }
 
-    if (!strncmp(ps_type, "Battery", 7))
+    if (!strncmp(ps_type, "Battery", 7) && strlen(uevent->ps_capacity) > 0)
         battery = true;
 
     online = atoi(uevent->ps_online);
@@ -494,6 +520,10 @@ static void process_ps_uevent(struct charger *charger, struct uevent *uevent)
         else if (supply && !was_online && online)
             charger->num_supplies_online++;
     }
+
+    /* If supply list changes, start animating again */
+    if (charger->num_supplies_online != old_supplies_online)
+        kick_animation(charger->batt_anim);
 
     LOGI("power supply %s (%s) %s (action=%s num_online=%d num_supplies=%d)\n",
          uevent->ps_name, ps_type, battery ? "" : online ? "online" : "offline",
@@ -624,7 +654,7 @@ static void android_green(void)
 }
 
 /* returns the last y-offset of where the surface ends */
-static int draw_surface_centered(struct charger *charger, gr_surface surface)
+static int draw_surface_centered(gr_surface surface)
 {
     int w;
     int h;
@@ -645,7 +675,7 @@ static void draw_unknown(struct charger *charger)
 {
     int y;
     if (charger->surf_unknown) {
-        draw_surface_centered(charger, charger->surf_unknown);
+        draw_surface_centered(charger->surf_unknown);
     } else {
         android_green();
         y = draw_text("Charging!", -1, -1);
@@ -659,7 +689,7 @@ static void draw_battery(struct charger *charger)
     struct frame *frame = &batt_anim->frames[batt_anim->cur_frame];
 
     if (batt_anim->num_frames != 0) {
-        draw_surface_centered(charger, frame->surface);
+        draw_surface_centered(frame->surface);
         LOGV("drawing frame #%d name=%s min_cap=%d time=%d\n",
              batt_anim->cur_frame, frame->name, frame->min_capacity,
              frame->disp_time);
@@ -680,22 +710,9 @@ static void redraw_screen(struct charger *charger)
     gr_flip();
 }
 
-static void kick_animation(struct animation *anim)
-{
-    anim->run = true;
-}
-
-static void reset_animation(struct animation *anim)
-{
-    anim->cur_cycle = 0;
-    anim->cur_frame = 0;
-    anim->run = false;
-}
-
 static void update_screen_state(struct charger *charger, int64_t now)
 {
     struct animation *batt_anim = charger->batt_anim;
-    int cur_frame;
     int disp_time;
 
     if (!batt_anim->run || now < charger->next_screen_transition)
@@ -717,7 +734,6 @@ static void update_screen_state(struct charger *charger, int64_t now)
     /* animation starting, set up the animation */
     if (batt_anim->cur_frame == 0) {
         int batt_cap;
-        int ret;
 
         LOGV("[%lld] animation starting\n", now);
         batt_cap = get_battery_capacity(charger);
@@ -750,7 +766,7 @@ static void update_screen_state(struct charger *charger, int64_t now)
      */
     if (batt_anim->num_frames == 0 || batt_anim->capacity < 0) {
         LOGV("[%lld] animation missing or unknown battery status\n", now);
-        charger->next_screen_transition = now + BATTERY_UNKNOWN_TIME;
+        charger->next_screen_transition = now + charger->batt_unknown_ms;
         batt_anim->cur_cycle++;
         return;
     }
@@ -758,24 +774,31 @@ static void update_screen_state(struct charger *charger, int64_t now)
     /* schedule next screen transition */
     charger->next_screen_transition = now + disp_time;
 
-    /* advance frame cntr to the next valid frame
-     * if necessary, advance cycle cntr, and reset frame cntr
-     */
-    batt_anim->cur_frame++;
 
-    /* if the frame is used for level-only, that is only show it when it's
-     * the current level, skip it during the animation.
+    /* advance frame cntr to the next valid frame if we are actually charging
      */
-    while (batt_anim->cur_frame < batt_anim->num_frames &&
-           batt_anim->frames[batt_anim->cur_frame].level_only)
+    if (charger->num_supplies_online != 0) {
         batt_anim->cur_frame++;
-    if (batt_anim->cur_frame >= batt_anim->num_frames) {
-        batt_anim->cur_cycle++;
-        batt_anim->cur_frame = 0;
 
-        /* don't reset the cycle counter, since we use that as a signal
-         * in a test above to check if animation is over
+        /* if the frame is used for level-only, that is only show it when it's
+         * the current level, skip it during the animation.
          */
+        while (batt_anim->cur_frame < batt_anim->num_frames &&
+               batt_anim->frames[batt_anim->cur_frame].level_only)
+            batt_anim->cur_frame++;
+        if (batt_anim->cur_frame >= batt_anim->num_frames) {
+            batt_anim->cur_cycle++;
+            batt_anim->cur_frame = 0;
+
+            /* don't reset the cycle counter, since we use that as a signal
+             * in a test above to check if animation is over
+             */
+        }
+    } else {
+        /* Stop animating if we're not charging, but keep visible until
+         * cycle count expires */
+        batt_anim->cur_frame = 0;
+        batt_anim->cur_cycle++;
     }
 }
 
@@ -832,25 +855,30 @@ static void set_next_key_check(struct charger *charger,
 static void process_key(struct charger *charger, int code, int64_t now)
 {
     struct key_state *key = &charger->keys[code];
-    int64_t next_key_check;
 
     if (code == KEY_POWER) {
-        if (key->down) {
-            int64_t reboot_timeout = key->timestamp + POWER_ON_KEY_TIME;
-            if (now >= reboot_timeout) {
-                LOGI("[%lld] rebooting\n", now);
-                android_reboot(ANDROID_RB_RESTART, 0, 0);
+        if (key->down && charger->power_key_ms >= 0) {
+            int64_t proceed_timeout = key->timestamp + charger->power_key_ms;
+            if (now >= proceed_timeout) {
+                if (get_battery_capacity(charger) >= charger->min_charge) {
+                    LOGI("[%lld] power button press+hold, exiting\n", now);
+                    charger->state = CHARGER_PROCEED;
+                } else {
+                    LOGI("[%lld] ignore press+hold power, battery level "
+                            "less than minimum\n", now);
+                }
             } else {
                 /* if the key is pressed but timeout hasn't expired,
                  * make sure we wake up at the right-ish time to check
                  */
-                set_next_key_check(charger, key, POWER_ON_KEY_TIME);
+                set_next_key_check(charger, key, charger->power_key_ms);
             }
         } else {
             /* if the power key got released, force screen state cycle */
             if (key->pending) {
                 request_suspend(false);
-                kick_animation(charger->batt_anim);
+                if (!key->down)
+                    kick_animation(charger->batt_anim);
             }
         }
     }
@@ -868,15 +896,19 @@ static void handle_input_state(struct charger *charger, int64_t now)
 
 static void handle_power_supply_state(struct charger *charger, int64_t now)
 {
+    if (charger->unplug_shutdown_ms < 0)
+        return;
+
     if (charger->num_supplies_online == 0) {
         request_suspend(false);
         if (charger->next_pwr_check == -1) {
-            charger->next_pwr_check = now + UNPLUGGED_SHUTDOWN_TIME;
+            charger->next_pwr_check = now + charger->unplug_shutdown_ms;
             LOGI("[%lld] device unplugged: shutting down in %lld (@ %lld)\n",
-                 now, UNPLUGGED_SHUTDOWN_TIME, charger->next_pwr_check);
+                 now, charger->unplug_shutdown_ms, charger->next_pwr_check);
         } else if (now >= charger->next_pwr_check) {
-            LOGI("[%lld] shutting down\n", now);
-            android_reboot(ANDROID_RB_POWEROFF, 0, 0);
+            LOGI("[%lld] shutting down (no online supplies)\n", now);
+            /* Subsequent battery level check may change this to CHARGER_PROCEED */
+            charger->state = CHARGER_SHUTDOWN;
         } else {
             /* otherwise we already have a shutdown timer scheduled */
         }
@@ -890,16 +922,48 @@ static void handle_power_supply_state(struct charger *charger, int64_t now)
     }
 }
 
+/* Periodic check of current battery level to see if it exceeds the
+ * minimum threshold */
+static void handle_capacity_state(struct charger *charger, int64_t now)
+{
+    int charge_pct;
+
+    if (!charger->min_charge)
+        return; /* We don't care */
+
+    if (!charger->battery) {
+        LOGE("Told to wait until battery is at %d%%, but no "
+                "battery detected at all. Exiting.\n", charger->min_charge);
+        charger->state = CHARGER_PROCEED;
+        return;
+    }
+
+    charge_pct = get_battery_capacity(charger);
+    if (charge_pct >= charger->min_charge) {
+        LOGI("[%lld] battery capacity %d%% >= %d%%, exiting\n", now,
+                charge_pct, charger->min_charge);
+        charger->state = CHARGER_PROCEED;
+    } else
+        LOGV("[%lld] battery capacity %d%% < %d%%\n", now,
+                charge_pct, charger->min_charge);
+
+
+    if (charger->num_supplies_online == 0)
+        charger->next_cap_check = -1;
+    else
+        charger->next_cap_check = now + charger->cap_poll_ms;
+}
+
 static void wait_next_event(struct charger *charger, int64_t now)
 {
     int64_t next_event = INT64_MAX;
     int64_t timeout;
-    struct input_event ev;
     int ret;
 
-    LOGV("[%lld] next screen: %lld next key: %lld next pwr: %lld\n", now,
-         charger->next_screen_transition, charger->next_key_check,
-         charger->next_pwr_check);
+    LOGV("[%lld] next screen: %lld next key: %lld next pwr: %lld "
+            "next cap: %lld\n", now, charger->next_screen_transition,
+            charger->next_key_check, charger->next_pwr_check,
+            charger->next_cap_check);
 
     if (charger->next_screen_transition != -1)
         next_event = charger->next_screen_transition;
@@ -907,6 +971,8 @@ static void wait_next_event(struct charger *charger, int64_t now)
         next_event = charger->next_key_check;
     if (charger->next_pwr_check != -1 && charger->next_pwr_check < next_event)
         next_event = charger->next_pwr_check;
+    if (charger->next_cap_check != -1 && charger->next_cap_check < next_event)
+        next_event = charger->next_cap_check;
 
     if (next_event != -1 && next_event != INT64_MAX)
         timeout = max(0, next_event - now);
@@ -931,9 +997,9 @@ static int input_callback(int fd, short revents, void *data)
     return 0;
 }
 
-static void event_loop(struct charger *charger)
+static enum charger_exit_state charger_event_loop()
 {
-    int ret;
+    struct charger *charger = &charger_state;
 
     while (true) {
         int64_t now = curr_time_ms();
@@ -941,36 +1007,48 @@ static void event_loop(struct charger *charger)
         LOGV("[%lld] event_loop()\n", now);
         handle_input_state(charger, now);
         handle_power_supply_state(charger, now);
+        handle_capacity_state(charger, now);
+
+        if (charger->state != CHARGER_CHARGE)
+            return charger->state;
 
         /* do screen update last in case any of the above want to start
          * screen transitions (animations, etc)
          */
         update_screen_state(charger, now);
-
         wait_next_event(charger, now);
     }
 }
 
-int main(int argc, char **argv)
+static void free_surfaces(struct animation *anim)
 {
-    int ret;
-    struct charger *charger = &charger_state;
+    for ( ; anim->allocated_frames > 0; anim->allocated_frames--)
+        res_free_surface(anim->frames[anim->allocated_frames - 1].surface);
+}
+
+enum charger_exit_state charger_run(int min_charge, int power_key_ms,
+        int batt_unknown_ms, int unplug_shutdown_ms, int cap_poll_ms)
+{
+    int fd, i, ret;
     int64_t now = curr_time_ms() - 1;
-    int fd;
-    int i;
-
-    list_init(&charger->supplies);
-
-    klog_init();
-    klog_set_level(CHARGER_KLOG_LEVEL);
+    struct charger *charger = &charger_state;
+    enum charger_exit_state out_state;
 
     dump_last_kmsg();
 
     LOGI("--------------- STARTING CHARGER MODE ---------------\n");
 
-    gr_init();
     gr_font_size(&char_width, &char_height);
 
+    list_init(&charger->supplies);
+    charger->min_charge = min_charge;
+    charger->state = CHARGER_CHARGE;
+    charger->power_key_ms = power_key_ms;
+    charger->batt_unknown_ms = batt_unknown_ms;
+    charger->unplug_shutdown_ms = unplug_shutdown_ms;
+    charger->cap_poll_ms = cap_poll_ms;
+
+    ev_exit();
     ev_init(input_callback, charger);
 
     fd = uevent_open_socket(64*1024, true);
@@ -993,26 +1071,31 @@ int main(int argc, char **argv)
         ret = res_create_surface(frame->name, &frame->surface);
         if (ret < 0) {
             LOGE("Cannot load image %s\n", frame->name);
-            /* TODO: free the already allocated surfaces... */
+            free_surfaces(charger->batt_anim);
             charger->batt_anim->num_frames = 0;
             charger->batt_anim->num_cycles = 1;
             break;
         }
+        charger->batt_anim->allocated_frames++;
     }
 
     ev_sync_key_state(set_key_callback, charger);
 
-#ifndef CHARGER_DISABLE_INIT_BLANK
-    gr_fb_blank(true);
-#endif
-
     charger->next_screen_transition = now - 1;
     charger->next_key_check = -1;
     charger->next_pwr_check = -1;
+    charger->next_cap_check = -1;
+
     reset_animation(charger->batt_anim);
     kick_animation(charger->batt_anim);
 
-    event_loop(charger);
+    out_state = charger_event_loop();
+    if (out_state == CHARGER_PROCEED && min_charge)
+        gr_fb_blank(false);
+    free_surfaces(charger->batt_anim);
+    ev_exit();
 
-    return 0;
+    return out_state;
 }
+
+
