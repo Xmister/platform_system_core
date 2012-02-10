@@ -57,6 +57,7 @@ TOOLS := \
 	touch \
 	lsof \
 	du \
+	lsusb \
 	md5
 
 ifeq ($(HAVE_SELINUX),true)
