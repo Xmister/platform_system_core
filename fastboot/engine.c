@@ -267,7 +267,7 @@ void generate_ext4_image(struct image_data *image)
     close(fd);
 }
 
-int fb_format(Action *a, usb_handle *usb, int skip_if_not_supported)
+int fb_format(Action *a, transport_t *transport, int skip_if_not_supported)
 {
     const char *partition = a->cmd;
     char response[FB_RESPONSE_SZ+1];
@@ -280,7 +280,7 @@ int fb_format(Action *a, usb_handle *usb, int skip_if_not_supported)
 
     response[FB_RESPONSE_SZ] = '\0';
     snprintf(cmd, sizeof(cmd), "getvar:partition-type:%s", partition);
-    status = fb_command_response(usb, cmd, response);
+    status = fb_command_response(transport, cmd, response);
     if (status) {
         if (skip_if_not_supported) {
             fprintf(stderr,
@@ -314,7 +314,7 @@ int fb_format(Action *a, usb_handle *usb, int skip_if_not_supported)
 
     response[FB_RESPONSE_SZ] = '\0';
     snprintf(cmd, sizeof(cmd), "getvar:partition-size:%s", partition);
-    status = fb_command_response(usb, cmd, response);
+    status = fb_command_response(transport, cmd, response);
     if (status) {
         if (skip_if_not_supported) {
             fprintf(stderr,
@@ -336,12 +336,12 @@ int fb_format(Action *a, usb_handle *usb, int skip_if_not_supported)
     // Following piece of code is similar to fb_queue_flash() but executes
     // actions directly without queuing
     fprintf(stderr, "sending '%s' (%lli KB)...\n", partition, image.image_size/1024);
-    status = fb_download_data(usb, image.buffer, image.image_size);
+    status = fb_download_data(transport, image.buffer, image.image_size);
     if (status) goto cleanup;
 
     fprintf(stderr, "writing '%s'...\n", partition);
     snprintf(cmd, sizeof(cmd), "flash:%s", partition);
-    status = fb_command(usb, cmd);
+    status = fb_command(transport, cmd);
     if (status) goto cleanup;
 
 cleanup:
@@ -535,7 +535,7 @@ void fb_queue_notice(const char *notice)
     a->data = (void*) notice;
 }
 
-int fb_execute_queue(usb_handle *usb)
+int fb_execute_queue(transport_t *transport)
 {
     Action *a;
     char resp[FB_RESPONSE_SZ+1];
@@ -553,21 +553,21 @@ int fb_execute_queue(usb_handle *usb)
             fprintf(stderr,"%s...\n",a->msg);
         }
         if (a->op == OP_DOWNLOAD) {
-            status = fb_download_data(usb, a->data, a->size);
+            status = fb_download_data(transport, a->data, a->size);
             status = a->func(a, status, status ? fb_get_error() : "");
             if (status) break;
         } else if (a->op == OP_COMMAND) {
-            status = fb_command(usb, a->cmd);
+            status = fb_command(transport, a->cmd);
             status = a->func(a, status, status ? fb_get_error() : "");
             if (status) break;
         } else if (a->op == OP_QUERY) {
-            status = fb_command_response(usb, a->cmd, resp);
+            status = fb_command_response(transport, a->cmd, resp);
             status = a->func(a, status, status ? fb_get_error() : resp);
             if (status) break;
         } else if (a->op == OP_NOTICE) {
             fprintf(stderr,"%s\n",(char*)a->data);
         } else if (a->op == OP_FORMAT) {
-            status = fb_format(a, usb, (int)a->data);
+            status = fb_format(a, transport, (int)a->data);
             status = a->func(a, status, status ? fb_get_error() : "");
             if (status) break;
         } else {

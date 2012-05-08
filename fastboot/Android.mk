@@ -18,7 +18,7 @@ include $(CLEAR_VARS)
 
 LOCAL_C_INCLUDES := $(LOCAL_PATH)/../mkbootimg \
   $(LOCAL_PATH)/../../extras/ext4_utils
-LOCAL_SRC_FILES := protocol.c engine.c bootimg.c fastboot.c
+LOCAL_SRC_FILES := protocol.c engine.c bootimg.c fastboot.c tcp.c
 LOCAL_MODULE := fastboot
 
 ifeq ($(HOST_OS),linux)

@@ -52,10 +52,11 @@ boot_img_hdr *mkbootimg(void *kernel, unsigned kernel_size,
                         unsigned page_size, unsigned base,
                         unsigned *bootimg_size);
 
-static usb_handle *usb = 0;
+static transport_t transport;
 static const char *serial = 0;
 static const char *product = 0;
 static const char *cmdline = 0;
+static const char *host = 0;
 static int wipe_data = 0;
 static unsigned short vendor_id = 0;
 
@@ -211,6 +212,14 @@ usb_handle *open_device(void)
     }
 }
 
+tcp_handle *open_device_tcp(void)
+{
+    static tcp_handle *tcp = 0;
+    if(tcp) return tcp;
+    tcp = tcp_open(host);
+    return tcp;
+}
+
 void list_devices(void) {
     // We don't actually open a USB device here,
     // just getting our callback called so we can
@@ -247,6 +256,7 @@ void usage(void)
             "  -i <vendor id>                           specify a custom USB vendor id\n"
             "  -b <base_addr>                           specify a custom kernel base address\n"
             "  -n <page size>                           specify the nand page size. default: 2048\n"
+            "  -t <host>                                connect to remote fastboot on host\n"
         );
 }
 
@@ -633,6 +643,10 @@ int main(int argc, char **argv)
                 die("invalid vendor id '%s'", argv[1]);
             vendor_id = (unsigned short)val;
             skip(2);
+        } else if(!strcmp(*argv, "-t")) {
+            require(2);
+            host = argv[1];
+            skip(2);
         } else if(!strcmp(*argv, "getvar")) {
             require(2);
             fb_queue_display(argv[1], argv[1]);
@@ -740,8 +754,18 @@ int main(int argc, char **argv)
         fb_queue_command("reboot-bootloader", "rebooting into bootloader");
     }
 
-    usb = open_device();
+    if(host) {
+        transport.userdata = open_device_tcp();
+        transport.close = tcp_close;
+        transport.read = tcp_read;
+        transport.write = tcp_write;
+    } else {
+        transport.userdata = open_device();
+        transport.close = usb_close;
+        transport.read = usb_read;
+        transport.write = usb_write;
+    }
 
-    status = fb_execute_queue(usb);
+    status = fb_execute_queue(&transport);
     return (status) ? 1 : 0;
 }
