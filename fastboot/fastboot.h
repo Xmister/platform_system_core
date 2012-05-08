@@ -29,12 +29,14 @@
 #ifndef _FASTBOOT_H_
 #define _FASTBOOT_H_
 
+#include "transport.h"
 #include "usb.h"
+#include "tcp.h"
 
 /* protocol.c - fastboot protocol */
-int fb_command(usb_handle *usb, const char *cmd);
-int fb_command_response(usb_handle *usb, const char *cmd, char *response);
-int fb_download_data(usb_handle *usb, const void *data, unsigned size);
+int fb_command(transport_t *trans, const char *cmd);
+int fb_command_response(transport_t *trans, const char *cmd, char *response);
+int fb_download_data(transport_t *trans, const void *data, unsigned size);
 char *fb_get_error(void);
 
 #define FB_COMMAND_SZ 64
@@ -52,7 +54,7 @@ void fb_queue_reboot(void);
 void fb_queue_command(const char *cmd, const char *msg);
 void fb_queue_download(const char *name, void *data, unsigned size);
 void fb_queue_notice(const char *notice);
-int fb_execute_queue(usb_handle *usb);
+int fb_execute_queue(transport_t *trans);
 
 /* util stuff */
 void die(const char *fmt, ...);
