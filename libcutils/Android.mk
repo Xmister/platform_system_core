@@ -131,12 +131,16 @@ LOCAL_SRC_FILES := $(commonSources) \
 ifeq ($(TARGET_ARCH),arm)
 LOCAL_SRC_FILES += arch-arm/memset32.S
 else  # !arm
-ifeq ($(TARGET_ARCH_VARIANT),x86-atom)
-LOCAL_CFLAGS += -DHAVE_MEMSET16 -DHAVE_MEMSET32
+ifeq ($(TARGET_ARCH),x86)
+ifeq ($(ARCH_X86_HAVE_SSE2),true)
+LOCAL_CFLAGS += -DHAVE_MEMSET16 -DHAVE_MEMSET32 -DUSE_SSE2
 LOCAL_SRC_FILES += arch-x86/android_memset16.S arch-x86/android_memset32.S memory.c
-else # !x86-atom
+else # !ARCH_X86_HAVE_SSE2
 LOCAL_SRC_FILES += memory.c
-endif # !x86-atom
+endif # !ARCH_X86_HAVE_SSE2
+else # !x86
+LOCAL_SRC_FILES += memory.c
+endif # !x86
 endif # !arm
 
 LOCAL_C_INCLUDES := $(libcutils_c_includes) $(KERNEL_HEADERS)
