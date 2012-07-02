@@ -115,7 +115,7 @@ void set_device_permission(int nargs, char **args)
     mode_t perm;
     uid_t uid;
     gid_t gid;
-    int prefix = 0;
+    int wildcard = 0;
     char *endptr;
     int ret;
     char *tmp = 0;
@@ -147,10 +147,8 @@ void set_device_permission(int nargs, char **args)
             asprintf(&tmp, "/dev/mtd/mtd%d", n);
         name = tmp;
     } else {
-        int len = strlen(name);
-        if (name[len - 1] == '*') {
-            prefix = 1;
-            name[len - 1] = '\0';
+        if (strchr(name, '*')) {
+            wildcard = 1;
         }
     }
 
@@ -177,6 +175,6 @@ void set_device_permission(int nargs, char **args)
     }
     gid = ret;
 
-    add_dev_perms(name, attr, perm, uid, gid, prefix);
+    add_dev_perms(name, attr, perm, uid, gid, wildcard);
     free(tmp);
 }
