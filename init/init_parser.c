@@ -93,6 +93,7 @@ int lookup_keyword(const char *s)
         if (!strcmp(s, "onsole")) return K_console;
         if (!strcmp(s, "hown")) return K_chown;
         if (!strcmp(s, "hmod")) return K_chmod;
+        if (!strcmp(s, "oldboot")) return K_coldboot;
         if (!strcmp(s, "ritical")) return K_critical;
         break;
     case 'd':
@@ -131,6 +132,9 @@ int lookup_keyword(const char *s)
         if (!strcmp(s, "n")) return K_on;
         if (!strcmp(s, "neshot")) return K_oneshot;
         if (!strcmp(s, "nrestart")) return K_onrestart;
+        break;
+    case 'p':
+        if (!strcmp(s, "robemod")) return K_probemod;
         break;
     case 'r':
         if (!strcmp(s, "estart")) return K_restart;

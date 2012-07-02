@@ -50,6 +50,7 @@ commonSources := \
 	threads.c \
 	sched_policy.c \
 	iosched_policy.c \
+	probe_module.c \
 	str_parms.c \
 
 commonHostSources := \
