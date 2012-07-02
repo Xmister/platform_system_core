@@ -865,7 +865,11 @@ int main(int argc, char **argv)
     int keychord_fd_init = 0;
     bool is_charger = false;
 
-    if (!strcmp(basename(argv[0]), "ueventd"))
+    /* If we are called as 'modprobe' command, we run as a
+     * standalone executable and reuse ueventd's logic to do the job.
+     */
+    if (!strcmp(basename(argv[0]), "ueventd")
+            || !strcmp(basename(argv[0]), "modprobe"))
         return ueventd_main(argc, argv);
 
     if (!strcmp(basename(argv[0]), "watchdogd"))
