@@ -496,6 +496,12 @@ int do_mount_all(int nargs, char **args)
         action_for_each_trigger("nonencrypted", action_add_queue_tail);
     }
 
+    /*
+     * Tell ueventd that fs has been mounted.
+     * So it can do deferred module loading.
+     */
+    coldboot("/sys/block");
+
     return ret;
 }
 

@@ -25,4 +25,5 @@ extern int add_dev_perms(const char *name, const char *attr,
                          mode_t perm, unsigned int uid,
                          unsigned int gid, unsigned short wildcard);
 int get_device_fd();
+void coldboot(const char *path);
 #endif	/* _INIT_DEVICES_H */
