@@ -133,12 +133,12 @@ else  # !arm
 ifeq ($(TARGET_ARCH),sh)
 LOCAL_SRC_FILES += memory.c atomic-android-sh.c
 else  # !sh
-ifeq ($(TARGET_ARCH_VARIANT),x86-atom)
-LOCAL_CFLAGS += -DHAVE_MEMSET16 -DHAVE_MEMSET32
+ifeq ($(ARCH_X86_HAVE_SSE2),true)
+LOCAL_CFLAGS += -DHAVE_MEMSET16 -DHAVE_MEMSET32 -DUSE_SSE2
 LOCAL_SRC_FILES += arch-x86/android_memset16.S arch-x86/android_memset32.S memory.c
-else # !x86-atom
+else # !ARCH_X86_HAVE_SSE2
 LOCAL_SRC_FILES += memory.c
-endif # !x86-atom
+endif # !ARCH_X86_HAVE_SSE2
 endif # !sh
 endif # !arm
 
