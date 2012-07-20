@@ -62,6 +62,32 @@ static void hyphen_to_underscore(char *str)
     }
 }
 
+/* Compare module names, but don't differentiate '_' and '-'.
+ * return: 0 when s1 is matched to s2 or size is zero.
+ *         non-zero in any other cases.
+ */
+static int match_name(const char * s1, const char *s2, const size_t size)
+{
+    size_t i;
+
+    if (!size)
+        return 0;
+
+    for (i = 0; i < size; i++, s1++, s2++) {
+
+        if ((*s1 == '_' || *s1 == '-') && (*s2 == '_' || *s2 == '-'))
+            continue;
+
+        if (*s1 != *s2)
+            return -1;
+
+        if (*s1 == '\0')
+            return 0;
+    }
+
+    return 0;
+}
+
 /* check if a line in dep file is target module's dependency.
  * return 1 when it is, otherwise 0 in any other cases.
  */
@@ -97,7 +123,7 @@ static int is_target_module(char *line, const char *target)
 
     snprintf(name, name_len, "%s%s", target, suffix);
 
-    ret = !strncmp(strip_path(line), name, name_len);
+    ret = !match_name(strip_path(line), name, name_len);
 
     /* restore [single] token, keep line unchanged until we parse it later */
     *token = *delimiter;
@@ -112,8 +138,7 @@ static int is_target_module(char *line, const char *target)
  *
  * return: dependency array's address if it succeeded. Caller
  *         is responsible to free the array's memory.
- *
- *         returns NULL when any error happens.
+ *         NULL when any error happens.
  */
 static char** setup_dep(char *line)
 {
