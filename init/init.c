@@ -72,7 +72,6 @@ static int   bootchart_count;
 static char console[32];
 static char bootmode[32];
 static char hardware[32];
-static char bootmedia[32] = "sdcard";
 static unsigned revision = 0;
 static char qemu[32];
 
@@ -547,7 +546,7 @@ void execute_one_command(void)
         cur_command = get_next_command(cur_action, cur_command);
     }
 
-    if (!cur_command || !cur_command->func)
+    if (!cur_command)
         return;
 
     ret = cur_command->func(cur_command->nargs, cur_command->args);
@@ -666,7 +665,6 @@ static void export_kernel_boot_props(void)
         { "ro.boot.mode", "ro.bootmode", "unknown", },
         { "ro.boot.baseband", "ro.baseband", "unknown", },
         { "ro.boot.bootloader", "ro.bootloader", "unknown", },
-        { "ro.boot.bootmedia", "ro.bootmedia", "sdcard", },
     };
 
     for (i = 0; i < ARRAY_SIZE(prop_map); i++) {
@@ -934,7 +932,6 @@ int main(int argc, char **argv)
         property_load_boot_defaults();
 
     INFO("reading config file\n");
-
     init_parse_config_file("/init.rc");
 
     action_for_each_trigger("early-init", action_add_queue_tail);
