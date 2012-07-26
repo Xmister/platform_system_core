@@ -543,7 +543,7 @@ int do_setprop(int nargs, char **args)
     char prop_val[PROP_VALUE_MAX];
     int ret;
 
-    ret = expand_props(prop_val, value, sizeof(prop_val));
+    ret = expand_or_substitute_props(prop_val, value, sizeof(prop_val));
     if (ret) {
         ERROR("cannot expand '%s' while assigning to '%s'\n", value, name);
         return -EINVAL;
@@ -635,7 +635,7 @@ int do_write(int nargs, char **args)
     char prop_val[PROP_VALUE_MAX];
     int ret;
 
-    ret = expand_props(prop_val, value, sizeof(prop_val));
+    ret = expand_or_substitute_props(prop_val, value, sizeof(prop_val));
     if (ret) {
         ERROR("cannot expand '%s' while writing to '%s'\n", value, path);
         return -EINVAL;

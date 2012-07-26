@@ -184,7 +184,7 @@ static int push_chars(char **dst, int *len, const char *chars, int cnt)
     return 0;
 }
 
-int expand_props(char *dst, const char *src, int dst_size)
+static int expand_props(char *dst, const char *src, int dst_size)
 {
     int cnt = 0;
     char *dst_ptr = dst;
@@ -288,6 +288,63 @@ err_nospace:
     ERROR("destination buffer overflow while expanding '%s'\n", src);
 err:
     return -1;
+}
+
+static int substitute_props(char *dst, const char *src, int dst_size)
+{
+    char *data;
+    char *src_ptr;
+    int idx;
+
+    src_ptr = strchr(src, '<');
+    src_ptr++;
+
+    /* read the content of file into memory */
+    data = read_file(src_ptr, NULL);
+    if (!data) {
+        ERROR("file %s cannot be opened for reading\n", src_ptr);
+        return -1;
+    }
+
+    /* remove all trailing newlines              */
+    /* including the one imposted by read_file() */
+    idx = strlen(data) - 1;
+    while (idx >= 0) {
+        if (data[idx] != '\n') {
+            break;
+        } else {
+            data[idx] = '\0';
+            idx--;
+        }
+    }
+
+    /* copy file content into destination buffer */
+    /* and make sure it is null-terminated       */
+    strncpy(dst, data, dst_size);
+    dst[dst_size - 1] = '\0';
+
+    return 0;
+}
+
+int expand_or_substitute_props(char *dst, const char *src, int dst_size)
+{
+    int src_len;
+
+    if (!src || !dst || dst_size == 0)
+        return -1;
+
+    src_len = strlen(src);
+
+    if (src_len == 0)
+        return -1;
+
+    if (src[0] == '<') {
+        /* write the contents of a file if src starts with '<' */
+        return substitute_props(dst, src, dst_size);
+    } else {
+        /* anything else use AOSP's default handler */
+        return expand_props(dst, src, dst_size);
+    }
 }
 
 void parse_import(struct parse_state *state, int nargs, char **args)
