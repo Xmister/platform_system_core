@@ -751,14 +751,15 @@ out:
 
 static void handle_deferred_module_loading()
 {
-    struct listnode *node;
-    struct module_alias_node *alias;
+    struct listnode *node = NULL;
+    struct listnode *next = NULL;
+    struct module_alias_node *alias = NULL;
 
     /* try to read the module alias mapping if map is empty
      * if succeed, loading all the modules in the queue
      */
     if (!list_empty(&modules_aliases_map)) {
-        list_for_each(node, &deferred_module_loading_list) {
+        list_for_each_safe(node, next, &deferred_module_loading_list) {
             alias = node_to_item(node, struct module_alias_node, list);
 
             if (alias && alias->pattern) {
@@ -769,8 +770,8 @@ static void handle_deferred_module_loading()
                 }
 
                 free(alias->pattern);
-                free(alias);
                 list_remove(node);
+                free(alias);
             }
         }
     }
