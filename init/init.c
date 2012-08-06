@@ -599,8 +599,6 @@ static int console_init_action(int nargs, char **args)
         console_name = strdup(tmp);
     }
 
-    load_565rle_image(INIT_IMAGE_FILE);
-
     /* Block the boot until the console node comes up */
     while (1) {
         fd = open(console_name, O_WRONLY);
