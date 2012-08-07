@@ -34,6 +34,9 @@ TOOLS := \
 	df \
 	getprop \
 	setprop \
+	cmpprop \
+	trygetprop \
+	trycmpprop \
 	watchprops \
 	log \
 	sleep \
@@ -59,6 +62,7 @@ TOOLS := \
 	du \
 	lsusb \
 	md5
+
 
 ifeq ($(HAVE_SELINUX),true)
 
