@@ -72,6 +72,7 @@ struct uevent {
     const char *firmware;
     const char *partition_name;
     const char *device_name;
+    const char *modalias;
     int partition_num;
     int major;
     int minor;
@@ -362,6 +363,7 @@ static void parse_event(const char *msg, struct uevent *uevent)
     uevent->partition_name = NULL;
     uevent->partition_num = -1;
     uevent->device_name = NULL;
+    uevent->modalias = NULL;
 
         /* currently ignoring SEQNUM */
     while(*msg) {
@@ -392,6 +394,9 @@ static void parse_event(const char *msg, struct uevent *uevent)
         } else if(!strncmp(msg, "DEVNAME=", 8)) {
             msg += 8;
             uevent->device_name = msg;
+        } else if(!strncmp(msg, "MODALIAS=", 9)) {
+            msg += 9;
+            uevent->modalias = msg;
         }
 
         /* advance to after the next \0 */
@@ -764,11 +769,7 @@ static void handle_deferred_module_loading()
 
             if (alias && alias->pattern) {
                 INFO("deferred loading of module for %s\n", alias->pattern);
-
-                if (!is_module_blacklisted(alias->name)) {
-                    load_module_by_device_modalias(alias->pattern);
-                }
-
+                load_module_by_device_modalias(alias->pattern);
                 free(alias->pattern);
                 list_remove(node);
                 free(alias);
@@ -777,10 +778,8 @@ static void handle_deferred_module_loading()
     }
 }
 
-static void handle_module_loading(const char *path)
+static void handle_module_loading(const char *modalias)
 {
-    char *modalias_path = NULL;
-    char *buf = NULL;
     char *tmp;
     struct module_alias_node *node;
 
@@ -794,23 +793,7 @@ static void handle_module_loading(const char *path)
         }
     }
 
-    if (!path) return;
-
-    if (asprintf(&modalias_path, "/sys%s/modalias", path) > 0) {
-        buf = read_file(modalias_path, NULL);
-        if (!buf) {
-            goto out;
-        }
-    } else {
-        ERROR("failed to allocate memory for path to modalias; kernel modules will not be loaded.\n");
-        goto out;
-    }
-
-    /* get rid of newlines */
-    tmp = strchr(buf, '\n');
-    if (tmp) {
-        *tmp = '\0';
-    }
+    if (!modalias) return;
 
     if (list_empty(&modules_aliases_map)) {
         /* if module alias mapping is empty,
@@ -818,31 +801,28 @@ static void handle_module_loading(const char *path)
          */
         node = calloc(1, sizeof(*node));
         if (node) {
-            node->pattern = strdup(buf);
+            node->pattern = strdup(modalias);
             if (!node->pattern) {
                 free(node);
             } else {
                 list_add_tail(&deferred_module_loading_list, &node->list);
-                INFO("add to queue for deferred module loading: %s, %s\n",
-                     path, buf);
+                INFO("add to queue for deferred module loading: %s",
+                        node->pattern);
             }
         } else {
             ERROR("failed to allocate memory to store device id for deferred module loading.\n");
         }
     } else {
-        load_module_by_device_modalias(buf);
+        load_module_by_device_modalias(modalias);
     }
 
-out:
-    free(buf);
-    free(modalias_path);
 }
 
 static void handle_device_event(struct uevent *uevent)
 {
     if (!strcmp(uevent->action,"add")) {
         fixup_sys_perms(uevent->path);
-        handle_module_loading(uevent->path);
+        handle_module_loading(uevent->modalias);
     }
 
     if (!strncmp(uevent->subsystem, "block", 5)) {
