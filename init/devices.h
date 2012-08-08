@@ -21,6 +21,7 @@
 
 extern void handle_device_fd();
 extern void device_init(void);
+extern int module_probe(const char *alias);
 extern int add_dev_perms(const char *name, const char *attr,
                          mode_t perm, unsigned int uid,
                          unsigned int gid, unsigned short wildcard);
