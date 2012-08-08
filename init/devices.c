@@ -778,6 +778,18 @@ static void handle_deferred_module_loading()
     }
 }
 
+int module_probe(const char *modalias)
+{
+    if (list_empty(&modules_aliases_map)) {
+        if (read_modules_aliases() == 0)
+            read_modules_blacklist();
+        else
+            return -1;
+    }
+
+    return load_module_by_device_modalias(modalias);
+}
+
 static void handle_module_loading(const char *modalias)
 {
     char *tmp;

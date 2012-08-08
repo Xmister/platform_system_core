@@ -21,7 +21,8 @@
 #include <stdio.h>
 #include <ctype.h>
 #include <signal.h>
-
+#include <libgen.h>
+#include <errno.h>
 #include <private/android_filesystem_config.h>
 
 #include "ueventd.h"
@@ -52,6 +53,26 @@ int ueventd_main(int argc, char **argv)
     struct pollfd ufd;
     int nr;
     char tmp[32];
+
+    /* kernel will launch a program in user space to load
+     * modules, by default it is modprobe.
+     * Kernel doesn't send module parameters, so we don't
+     * need to support them.
+     * No deferred loading in this case.
+     */
+    if (argc >= 4
+            && !strcmp(basename(argv[0]), "modprobe")
+            && argv[3] != NULL
+            && *argv[3] != '\0') {
+        uid_t uid;
+
+        /* We only accept requests from root user (kernel) */
+        uid = getuid();
+        if (uid)
+            return -EPERM;
+
+        return module_probe(argv[3]);
+    }
 
     /*
      * init sets the umask to 077 for forked processes. We need to
