@@ -66,7 +66,7 @@ static void hyphen_to_underscore(char *str)
  * return: 0 when s1 is matched to s2 or size is zero.
  *         non-zero in any other cases.
  */
-static int match_name(const char * s1, const char *s2, const size_t size)
+static int match_name(const char *s1, const char *s2, const size_t size)
 {
     size_t i;
 
@@ -151,7 +151,7 @@ static char** setup_dep(char *line)
 
     dep = malloc(sizeof(char *) * dep_num);
 
-    if(!dep) {
+    if (!dep) {
         ALOGE("cannot alloc dep array\n");
         return dep;
     }
@@ -221,7 +221,7 @@ static int insmod(const char *path_name, const char *args)
  * base    : a prefix to module path, it will NOT be affected by strip flag.
  * return  : 0 for success or nothing to do; non-zero when any error occurs.
  */
-static int insmod_s(char *dep[], const char *args, int strip, const char * base)
+static int insmod_s(char *dep[], const char *args, int strip, const char *base)
 {
     char *name;
     char *path_name;
@@ -274,7 +274,7 @@ static int rmmod(const char *mod_name, unsigned int flags)
 /* remove all modules in a dependency chain
  * NOTE: We assume module name in kernel is same as the file name without .ko
  */
-static int rmmod_s(char * dep[], unsigned int flags)
+static int rmmod_s(char *dep[], unsigned int flags)
 {
     int i;
     int ret = 0;
@@ -310,8 +310,8 @@ static int rmmod_s(char * dep[], unsigned int flags)
 
 /* look_up_dep() find and setup target module's dependency in modules.dep
  *
- * dep_name:    dependency file's path and name. This file should be created
- *              by depmod tool. It is usually the modules.dep in text format.
+ * dep_file:    a pointer to module's dep file loaded in memory, its content
+ *              will be CHANGED during parsing.
  *
  * return:      a pointer to an array which holds the dependency strings and
  *              terminated by a NULL pointer. Caller is responsible to free the
@@ -319,31 +319,17 @@ static int rmmod_s(char * dep[], unsigned int flags)
  *
  *              non-zero in any other cases. Content of dep array is invalid.
  */
-static char ** look_up_dep(const char *module_name, const char *dep_name)
+static char ** look_up_dep(const char *module_name, void *dep_file)
 {
-    void *dep_file;
+
     char *line;
     char *saved_pos;
     char *start;
-    static const char* dep_file_name = LDM_DEFAULT_DEP_FILE;;
-    unsigned int len;
     int ret = -1;
     char **dep = NULL;
 
-    if(!module_name || !strlen(module_name)) {
-        ALOGE("need valid module name\n");
+    if (!dep_file || !module_name || *module_name == '\0')
         return NULL;
-    }
-
-    if (dep_name && strlen(dep_name))
-        dep_file_name = dep_name;
-
-    dep_file = load_file(dep_file_name, &len);
-
-    if (!dep_file) {
-        ALOGE("cannot load dep file : %s\n", dep_file_name);
-        return NULL;
-    }
 
     start = (char *)dep_file;
 
@@ -360,9 +346,29 @@ static char ** look_up_dep(const char *module_name, const char *dep_name)
         }
     }
 
-    free(dep_file);
-
     return dep;
+}
+
+/* load_dep_file() load a dep file (usually it is modules.dep)
+ * into memory. Caller is responsible to free the memory.
+ *
+ * file_name:   dep file's name, if it is NULL or an empty string,
+ *              This function will try to load a dep file in the
+ *              default path defined in LDM_DEFAULT_DEP_FILE
+ *
+ * return:      a pointer to the allocated mem which holds all
+ *              content of the depfile. a zero pointer will be
+ *              returned for any errors.
+ * */
+static void *load_dep_file(const char *file_name)
+{
+    const char *dep_file_name = LDM_DEFAULT_DEP_FILE;
+    unsigned int len;
+
+    if (file_name && *file_name != '\0')
+        dep_file_name = file_name;
+
+    return load_file(dep_file_name, &len);
 }
 
 /* insmod_by_dep() interface to outside,
@@ -372,21 +378,37 @@ int insmod_by_dep(const char *module_name,
         const char *args,
         const char *dep_name,
         int strip,
-        const char * base)
+        const char *base)
 {
+    void *dep_file;
     char **dep = NULL;
     int ret = -1;
 
-    dep = look_up_dep(module_name, dep_name);
+    if (!module_name || *module_name == '\0') {
+        ALOGE("need valid module name\n");
+        return ret;
+    }
+
+    dep_file = load_dep_file(dep_name);
+
+    if (!dep_file) {
+        ALOGE("cannot load dep file : %s\n", dep_name);
+        return ret;
+    }
+
+    dep = look_up_dep(module_name, dep_file);
 
     if (!dep) {
         ALOGE("%s: cannot load module: [%s]\n", __FUNCTION__, module_name);
-        return -1;
+        goto free_file;
     }
 
     ret = insmod_s(dep, args, strip, base);
 
     free(dep);
+
+free_file:
+    free(dep_file);
 
     return ret;
 
@@ -398,19 +420,35 @@ int insmod_by_dep(const char *module_name,
 int rmmod_by_dep(const char *module_name,
         const char *dep_name)
 {
+    void *dep_file;
     char **dep = NULL;
     int ret = -1;
 
-    dep = look_up_dep(module_name, dep_name);
+    if (!module_name || *module_name == '\0') {
+        ALOGE("need valid module name\n");
+        return ret;
+    }
+
+    dep_file = load_dep_file(dep_name);
+
+    if (!dep_file) {
+        ALOGE("cannot load dep file : %s\n", dep_name);
+        return ret;
+    }
+
+    dep = look_up_dep(module_name, dep_file);
 
     if (!dep) {
         ALOGE("%s: cannot remove module: [%s]\n", __FUNCTION__, module_name);
-        return -1;
+        goto free_file;
     }
 
     ret = rmmod_s(dep, O_NONBLOCK);
 
     free(dep);
+
+free_file:
+    free(dep_file);
 
     return ret;
 }
