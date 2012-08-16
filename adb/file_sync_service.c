@@ -306,10 +306,6 @@ static int do_send(int s, char *path, char *buffer)
 #else
     {
 #endif
-        /* copy user permission bits to "group" and "other" permissions */
-        mode |= ((mode >> 3) & 0070);
-        mode |= ((mode >> 3) & 0007);
-
         ret = handle_send_file(s, path, mode, buffer);
     }
 
