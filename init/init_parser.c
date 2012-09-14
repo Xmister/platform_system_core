@@ -93,6 +93,7 @@ int lookup_keyword(const char *s)
         if (!strcmp(s, "onsole")) return K_console;
         if (!strcmp(s, "hown")) return K_chown;
         if (!strcmp(s, "hmod")) return K_chmod;
+        if (!strcmp(s, "oldboot")) return K_coldboot;
         if (!strcmp(s, "ritical")) return K_critical;
         break;
     case 'd':
