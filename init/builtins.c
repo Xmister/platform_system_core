@@ -652,12 +652,6 @@ int do_mount_all(int nargs, char **args)
         action_for_each_trigger("nonencrypted", action_add_queue_tail);
     }
 
-    /*
-     * Tell ueventd that fs has been mounted.
-     * So it can do deferred module loading.
-     */
-    coldboot("/sys/block");
-
     return ret;
 }
 
@@ -690,6 +684,16 @@ int do_setkey(int nargs, char **args)
     kbe.kb_index = strtoul(args[2], 0, 0);
     kbe.kb_value = strtoul(args[3], 0, 0);
     return setkey(&kbe);
+}
+
+int do_builtin_coldboot(int nargs, char **args)
+{
+    if (nargs != 2 || !args[1] || *args[1] == '\0')
+        return -1;
+
+    coldboot(args[1]);
+
+    return 0;
 }
 
 int do_setprop(int nargs, char **args)
