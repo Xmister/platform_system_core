@@ -30,6 +30,7 @@
 #define TRACE_TAG  TRACE_SYNC
 #include "adb.h"
 #include "file_sync_service.h"
+#include "android_filesystem_config.h"
 
 static int mkdirs(char *name)
 {
@@ -306,6 +307,9 @@ static int do_send(int s, char *path, char *buffer)
 #else
     {
 #endif
+        unsigned uid, gid;
+
+        fs_config(path, 0, &uid, &gid, &mode);
         ret = handle_send_file(s, path, mode, buffer);
     }
 
