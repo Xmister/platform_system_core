@@ -662,11 +662,7 @@ void queue_all_device_triggers()
     list_for_each(node, &action_list) {
         act = node_to_item(node, struct action, alist);
         if (!strncmp(act->name, ACTION_STRING_DEVICE_ADDED, strlen(ACTION_STRING_DEVICE_ADDED))) {
-            const char *test = act->name + strlen(ACTION_STRING_DEVICE_ADDED);
-            INFO("test:%s", test);
-            if ((r = access(test, R_OK)) == 0) {
-               action_add_queue_tail(act);
-            }
+            action_add_queue_tail(act);
         }
     }
 }
