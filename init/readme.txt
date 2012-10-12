@@ -182,6 +182,10 @@ mount <type> <device> <dir> [ <mountoption> ]*
    device by name.
    <mountoption>s include "ro", "rw", "remount", "noatime", ...
 
+readprops <path>
+   Read and set system properties based on the contents of a text file
+   at <path>
+
 setkey
    TBD
 
