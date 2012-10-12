@@ -34,6 +34,6 @@ void queue_builtin_action(int (*func)(int nargs, char **args), char *name);
 void queue_device_added_removed_triggers(const char *name, bool dev_added);
 void queue_all_device_triggers();
 int init_parse_config_file(const char *fn);
-int expand_or_substitute_props(char *dst, const char *src, int dst_size);
+char *expand_references(const char *src);
 
 #endif
