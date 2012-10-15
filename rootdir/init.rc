@@ -274,6 +274,7 @@ on boot
     chown system system /sys/power/wakeup_count
     chown radio system /sys/power/wake_lock
     chown radio system /sys/power/wake_unlock
+    chmod 0660 /sys/power/autosleep
     chmod 0660 /sys/power/state
     chmod 0660 /sys/power/wake_lock
     chmod 0660 /sys/power/wake_unlock
