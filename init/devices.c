@@ -73,6 +73,7 @@ struct uevent {
     const char *partition_name;
     const char *device_name;
     const char *modalias;
+    const char *uuid;
     int partition_num;
     int major;
     int minor;
@@ -364,6 +365,7 @@ static void parse_event(const char *msg, struct uevent *uevent)
     uevent->partition_num = -1;
     uevent->device_name = NULL;
     uevent->modalias = NULL;
+    uevent->uuid = NULL;
 
         /* currently ignoring SEQNUM */
     while(*msg) {
@@ -397,6 +399,9 @@ static void parse_event(const char *msg, struct uevent *uevent)
         } else if(!strncmp(msg, "MODALIAS=", 9)) {
             msg += 9;
             uevent->modalias = msg;
+        } else if(!strncmp(msg, "UUID=", 5)) {
+            msg += 5;
+            uevent->uuid = msg;
         }
 
         /* advance to after the next \0 */
@@ -580,6 +585,23 @@ static const char *parse_device_name(struct uevent *uevent, unsigned int len)
     return name;
 }
 
+static char **add_uuid_link(struct uevent *uevent)
+{
+    char **links = calloc(2, sizeof(char *));
+    char *p;
+
+    if (!links)
+        return NULL;
+
+    if (uevent->uuid) {
+        if (asprintf(&links[0], "/dev/block/by-uuid/%s", uevent->uuid) < 0) {
+            free(links);
+            return NULL;
+        }
+    }
+    return links;
+}
+
 static void handle_block_device_event(struct uevent *uevent)
 {
     const char *base = "/dev/block/";
@@ -596,6 +618,8 @@ static void handle_block_device_event(struct uevent *uevent)
 
     if (!strncmp(uevent->path, "/devices/platform/", 18))
         links = parse_platform_block_device(uevent);
+    else
+        links = add_uuid_link(uevent);
 
     handle_device(uevent->action, devpath, uevent->path, 1,
             uevent->major, uevent->minor, links);
