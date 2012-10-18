@@ -114,7 +114,7 @@ include $(BUILD_HOST_STATIC_LIBRARY)
 # This is needed in LOCAL_C_INCLUDES to access the C library's private
 # header named <bionic_time.h>
 #
-libcutils_c_includes := bionic/libc/private
+libcutils_c_includes := bionic/libc/private bootable/recovery
 
 include $(CLEAR_VARS)
 LOCAL_MODULE := libcutils

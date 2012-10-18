@@ -23,6 +23,8 @@
 #include <string.h>
 
 #include <cutils/android_reboot.h>
+#include <cutils/properties.h>
+#include <bootloader.h>
 
 /* Check to see if /proc/mounts contains any writeable filesystems
  * backed by a block device.
@@ -101,6 +103,31 @@ static void remount_ro(void)
 }
 
 
+static void set_bcb(const char *arg)
+{
+    char value[PROPERTY_VALUE_MAX];
+    int fd;
+    struct bootloader_message bcb;
+    size_t s;
+
+    if (!property_get("ro.boot.bcb_device", value, NULL))
+        return;
+
+    fd = open(value, O_RDWR | O_SYNC);
+    if (fd < 0)
+        return;
+
+    if (read(fd, &bcb, sizeof(bcb)) != sizeof(bcb)) {
+        close(fd);
+        return;
+    }
+
+    snprintf(bcb.command, sizeof(bcb.command), "bootonce-%s", arg);
+    lseek(fd, 0, SEEK_SET);
+    write(fd, &bcb, sizeof(bcb));
+    close(fd);
+}
+
 int android_reboot(int cmd, int flags, char *arg)
 {
     int ret;
@@ -121,6 +148,7 @@ int android_reboot(int cmd, int flags, char *arg)
             break;
 
         case ANDROID_RB_RESTART2:
+            set_bcb(arg);
             ret = __reboot(LINUX_REBOOT_MAGIC1, LINUX_REBOOT_MAGIC2,
                            LINUX_REBOOT_CMD_RESTART2, arg);
             break;
