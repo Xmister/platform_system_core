@@ -309,7 +309,11 @@ static int do_send(int s, char *path, char *buffer)
 #endif
         unsigned uid, gid;
 
-        fs_config(path, 0, &uid, &gid, &mode);
+        // strip all leading '/'(s)
+        for(tmp = path; *tmp == '/'; tmp++)
+            ;
+
+        fs_config(tmp, 0, &uid, &gid, &mode);
         ret = handle_send_file(s, path, mode, buffer);
     }
 
