@@ -60,18 +60,22 @@ int ueventd_main(int argc, char **argv)
      * need to support them.
      * No deferred loading in this case.
      */
-    if (argc >= 4
-            && !strcmp(basename(argv[0]), "modprobe")
-            && argv[3] != NULL
-            && *argv[3] != '\0') {
-        uid_t uid;
+    if (!strcmp(basename(argv[0]), "modprobe")) {
+        if (argc >= 4
+                && argv[3] != NULL
+                && *argv[3] != '\0') {
+            uid_t uid;
 
-        /* We only accept requests from root user (kernel) */
-        uid = getuid();
-        if (uid)
-            return -EPERM;
+            /* We only accept requests from root user (kernel) */
+            uid = getuid();
+            if (uid)
+                return -EPERM;
 
-        return module_probe(argv[3]);
+            return module_probe(argv[3]);
+        } else {
+            /* modprobe is called without enough arguments */
+            return -EINVAL;
+        }
     }
 
     /*
