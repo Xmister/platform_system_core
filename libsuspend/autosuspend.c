@@ -35,12 +35,12 @@ static int autosuspend_init(void)
 
     autosuspend_inited = true;
 
-    autosuspend_ops = autosuspend_earlysuspend_init();
+    autosuspend_ops = autosuspend_autosleep_init();
     if (autosuspend_ops) {
         goto out;
     }
 
-    autosuspend_ops = autosuspend_autosleep_init();
+    autosuspend_ops = autosuspend_earlysuspend_init();
     if (autosuspend_ops) {
         goto out;
     }
