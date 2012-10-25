@@ -113,7 +113,7 @@ static void set_bcb(const char *arg)
     if (!property_get("ro.boot.bcb_device", value, NULL))
         return;
 
-    fd = open(value, O_RDWR);
+    fd = open(value, O_RDWR | O_SYNC);
     if (fd < 0)
         return;
 
