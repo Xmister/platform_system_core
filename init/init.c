@@ -875,6 +875,7 @@ int main(int argc, char **argv)
     int signal_fd_init = 0;
     int keychord_fd_init = 0;
     bool is_charger = false;
+    const char *initrc_path;
 
     /* If we are called as 'modprobe' command, we run as a
      * standalone executable and reuse ueventd's logic to do the job.
@@ -954,8 +955,11 @@ int main(int argc, char **argv)
     if (!is_charger)
         property_load_boot_defaults();
 
-    INFO("reading config file\n");
-    init_parse_config_file("/init.rc");
+    initrc_path = property_get("ro.boot.initrc");
+    if (!initrc_path)
+        initrc_path = "/init.rc";
+    INFO("reading config file %s\n", initrc_path);
+    init_parse_config_file(initrc_path);
 
     action_for_each_trigger("early-init", action_add_queue_tail);
 
