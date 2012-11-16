@@ -497,6 +497,29 @@ err:
     return NULL;
 }
 
+static char **parse_gpt_block_device(struct uevent *uevent)
+{
+    char **links = calloc(2, sizeof(char *));
+
+    if (!links)
+        return NULL;
+
+    if (uevent->partition_name) {
+        char prefix[PROP_VALUE_MAX];
+        int len;
+        len = __system_property_get("ro.boot.install_id", prefix);
+        if (!len || strncmp(prefix, uevent->partition_name, len))
+            return NULL;
+        if (asprintf(&links[0], "/dev/block/by-name/%s",
+                    uevent->partition_name + len) < 0) {
+            free(links);
+            return NULL;
+        }
+    }
+    return links;
+}
+
+
 static void handle_device(const char *action, const char *devpath,
         const char *path, int block, int major, int minor, char **links)
 {
@@ -572,6 +595,8 @@ static void handle_block_device_event(struct uevent *uevent)
 
     if (!strncmp(uevent->path, "/devices/platform/", 18))
         links = parse_platform_block_device(uevent);
+    else
+        links = parse_gpt_block_device(uevent);
 
     handle_device(uevent->action, devpath, uevent->path, 1,
             uevent->major, uevent->minor, links);
