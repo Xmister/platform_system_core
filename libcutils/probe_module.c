@@ -14,12 +14,15 @@
  * limitations under the License.
  */
 
+#define _GNU_SOURCE
 #include <stdio.h>
 #include <stdlib.h>
 #include <string.h>
 #include <errno.h>
 #include <fcntl.h>
 #include <cutils/misc.h>
+#include <cutils/list.h>
+#include <cutils/module_parsers.h>
 
 #define LOG_TAG "ProbeModule"
 #include <cutils/log.h>
@@ -371,6 +374,67 @@ static void *load_dep_file(const char *file_name)
     return load_file(dep_file_name, &len);
 }
 
+/* is_dep_in_blacklist() checks if any module in dependency
+ * is in a blacklilst
+ * dep:         dependency array
+ * blacklist :  head of a black list.
+ * return:      1 if any module in dep is in black list.
+ *              -1 when any error happens
+ *              0 none of modules in dep is in black list.
+ * */
+static int is_dep_in_blacklist(char *dep[], struct listnode *blacklist)
+{
+    int i;
+    char *tmp;
+    int ret = 0;
+    size_t len;
+
+    for (i = 0; dep[i]; i++) {
+        tmp = dep[i];
+        len = strlen(tmp);
+
+        if (!(len > strlen(".ko")
+                && tmp[len - 1] == 'o'
+                        && tmp[len - 2] == 'k'
+                                && tmp[len - 3] == '.')) {
+            ret = -1;
+
+            break;
+        }
+
+        if (asprintf(&tmp, "%s", dep[i]) <= 0) {
+            ret = -1;
+
+            break;
+        }
+
+        tmp[len - 3] = '\0';
+        if (is_module_blacklisted(strip_path(tmp), blacklist)) {
+            ALOGE("found module [%s] is in black list\n", tmp);
+            free(tmp);
+            ret = 1;
+
+            break;
+        }
+        free(tmp);
+    }
+
+    return ret;
+}
+static void dump_black_list(struct listnode *black_list_head)
+{
+    struct listnode *blklst_node;
+    struct module_blacklist_node *blacklist;
+
+    list_for_each(blklst_node, black_list_head) {
+        blacklist = node_to_item(blklst_node,
+                                 struct module_blacklist_node,
+                                 list);
+
+            ALOGE("DUMP BLACK: [%s]\n", blacklist->name);
+
+    }
+}
 /* insmod_by_dep() interface to outside,
  * refer to its description in probe_module.h
  */
@@ -378,40 +442,68 @@ int insmod_by_dep(const char *module_name,
         const char *args,
         const char *dep_name,
         int strip,
-        const char *base)
+        const char *base,
+        const char *blacklist)
 {
-    void *dep_file;
+    void *dep_file = NULL;
     char **dep = NULL;
     int ret = -1;
+    list_declare(base_blacklist);
+    list_declare(extra_blacklist);
 
     if (!module_name || *module_name == '\0') {
         ALOGE("need valid module name\n");
         return ret;
     }
 
+    ret = parse_blacklist_to_list("/system/etc/modules.blacklist", &base_blacklist);
+
+    if (ret)
+        ALOGI("%s: parse base black list error %d\n", __FUNCTION__, ret);
+
+    if (blacklist && *blacklist != '\0') {
+        ret = parse_blacklist_to_list(blacklist, &extra_blacklist);
+        if (ret) {
+            ALOGI("%s: parse extra black list error %d\n", __FUNCTION__, ret);
+
+            /* Extra black list from caller is optional, but when caller does
+             * give us an extra file and something's wrong with it, we will stop going further*/
+            goto free_file;
+        }
+    }
     dep_file = load_dep_file(dep_name);
 
     if (!dep_file) {
         ALOGE("cannot load dep file : %s\n", dep_name);
-        return ret;
+        goto free_file;
     }
 
     dep = look_up_dep(module_name, dep_file);
 
     if (!dep) {
-        ALOGE("%s: cannot load module: [%s]\n", __FUNCTION__, module_name);
+        ALOGE("%s: cannot find module's dependency info: [%s]\n", __FUNCTION__, module_name);
+        goto free_file;
+    }
+
+    if (is_dep_in_blacklist(dep, &extra_blacklist)) {
+        ALOGE("%s: a module is in caller's black list, stop further loading\n", __FUNCTION__);
+        goto free_file;
+    }
+
+    if (is_dep_in_blacklist(dep, &base_blacklist)) {
+        ALOGE("%s: a module is in system black list, stop further loading\n", __FUNCTION__);
         goto free_file;
     }
 
     ret = insmod_s(dep, args, strip, base);
 
-    free(dep);
-
 free_file:
+    free(dep);
     free(dep_file);
+    free_black_list(&base_blacklist);
+    free_black_list(&extra_blacklist);
 
     return ret;
-
 }
 
 /* rmmod_by_dep() interface to outside,

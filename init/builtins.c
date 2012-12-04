@@ -428,7 +428,7 @@ static int do_probemod_inner(int nargs, char **args, int opt_len)
         }
     }
 
-    ret = insmod_by_dep(args[1], options, NULL, 1, NULL);
+    ret = insmod_by_dep(args[1], options, NULL, 1, NULL, NULL);
     if (ret)
         ERROR("Couldn't probe module '%s'\n", args[1]);
     return ret;
