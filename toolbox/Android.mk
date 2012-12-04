@@ -107,6 +107,11 @@ LOCAL_C_INCLUDES += external/libselinux/include
 
 endif
 
+ifeq ($(INTEL_HOUDINI), true)
+    LOCAL_CFLAGS += -DWITH_HOUDINI
+    LOCAL_STATIC_LIBRARIES += houdini_hook
+endif
+
 LOCAL_MODULE := toolbox
 
 # Including this will define $(intermediates).

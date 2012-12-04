@@ -766,6 +766,18 @@ static int property_service_init_action(int nargs, char **args)
     return 0;
 }
 
+static int personality_init_action(int nargs, char **args)
+{
+    const char *pval;
+    pval = property_get("ro.config.personality");
+    if (pval && !strcmp(pval, "compat_layout")) {
+        int old_personality;
+        old_personality = personality((unsigned long)-1);
+        personality(old_personality | ADDR_COMPAT_LAYOUT);
+    }
+    return 0;
+}
+
 static int signal_init_action(int nargs, char **args)
 {
     signal_init();
@@ -993,6 +1005,7 @@ int main(int argc, char **argv)
     }
 
     queue_builtin_action(property_service_init_action, "property_service_init");
+    queue_builtin_action(personality_init_action, "personality_init");
     queue_builtin_action(signal_init_action, "signal_init");
     queue_builtin_action(check_startup_action, "check_startup");
 
