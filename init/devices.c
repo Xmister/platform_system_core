@@ -1228,8 +1228,8 @@ void device_init(void)
         sehandle = selinux_android_file_context_handle();
     }
 #endif
-    /* is 64K enough? udev uses 16MB! */
-    device_fd = uevent_open_socket(64*1024, true);
+    /* is 1MB enough? udev uses 16MB! */
+    device_fd = uevent_open_socket(1024*1024, true);
     if(device_fd < 0)
         return;
 
