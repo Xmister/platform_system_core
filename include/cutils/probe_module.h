@@ -48,6 +48,17 @@ extern "C" {
  *              must be a '/'. If it is NULL, we will take
  *              /system/lib/modules/modules.dep by default.
  *
+ * blacklist  : A file of modules you don't want to loaded. It is optional.
+ *              If the file name is provided, modules in it will be parsed
+ *              and appended to the system's module black list which is from
+ *              the base /etc/modules.blacklist. The base black list will
+ *              always be appiled in insmod_by_dep(). This parameter provides
+ *              a chance to callers to prevent more modules in a one-shot
+ *              style. The typical format of a module in the black list file
+ *              is like the below. Note, specify module's name instead of alias.
+ *
+ *              blacklist your_module_name
+ *
  * return     : 0 for success; non-zero for any errors.
  *
  * Note:
@@ -60,7 +71,8 @@ extern int insmod_by_dep(
         const char *args,
         const char *dep_name,
         int strip,
-        const char * base);
+        const char *base,
+        const char *blacklist);
 
 /* rmmod_by_dep() - remove a module (target) from kernel with its dependency
  * The module's dependency must be described in the provided dependency file.

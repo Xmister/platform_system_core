@@ -51,15 +51,14 @@
 #include "log.h"
 #include "parser.h"
 
+#include <cutils/module_parsers.h>
+
 #define SYSFS_PREFIX    "/sys"
 #define FIRMWARE_DIR1   "/etc/firmware"
 #define FIRMWARE_DIR2   "/vendor/firmware"
 #define FIRMWARE_DIR3   "/firmware/image"
-
 #define MODULES_ALIAS   "/system/lib/modules/modules.alias"
-#define MODULES_BLKLST  "/system/etc/modules.blacklist"
-#define READ_MODULES_ALIAS	1
-#define READ_MODULES_BLKLST	2
+#define MODULES_BLKLST  "/system/etc/ueventd.modules.blacklist"
 
 #ifdef HAVE_SELINUX
 extern struct selabel_handle *sehandle;
@@ -100,26 +99,11 @@ struct platform_node {
     struct listnode list;
 };
 
-struct module_alias_node {
-    char *name;
-    char *pattern;
-    struct listnode list;
-};
-
-struct module_blacklist_node {
-    char *name;
-    struct listnode list;
-};
-
 static list_declare(sys_perms);
 static list_declare(dev_perms);
 static list_declare(platform_names);
 static list_declare(modules_aliases_map);
-static list_declare(modules_blacklist);
 static list_declare(deferred_module_loading_list);
-
-static int read_modules_aliases();
-static int read_modules_blacklist();
 
 int add_dev_perms(const char *name, const char *attr,
                   mode_t perm, unsigned int uid, unsigned int gid,
@@ -692,30 +676,6 @@ static void handle_generic_device_event(struct uevent *uevent)
              uevent->major, uevent->minor, links);
 }
 
-static int is_module_blacklisted(const char *name)
-{
-    struct listnode *blklst_node;
-    struct module_blacklist_node *blacklist;
-    int ret = 0;
-
-    if (!name) goto out;
-
-    /* See if module is blacklisted, skip if it is */
-    list_for_each(blklst_node, &modules_blacklist) {
-        blacklist = node_to_item(blklst_node,
-                                 struct module_blacklist_node,
-                                 list);
-        if (!strcmp(name, blacklist->name)) {
-            INFO("modules %s is blacklisted\n", name);
-            ret = 1;
-            goto out;
-        }
-    }
-
-out:
-    return ret;
-}
-
 static int load_module_by_device_modalias(const char *id)
 {
     struct listnode *alias_node;
@@ -730,21 +690,19 @@ static int load_module_by_device_modalias(const char *id)
         if (alias && alias->name && alias->pattern) {
             if (fnmatch(alias->pattern, id, 0) == 0) {
                 INFO("trying to load module %s due to uevents\n", alias->name);
-
-                if (!is_module_blacklisted(alias->name)) {
-                    if (insmod_by_dep(alias->name, "", NULL, 1, NULL)) {
-                        /* cannot load module. try another one since
-                         * there may be another match.
-                         */
-                        INFO("cannot load module %s due to uevents\n",
-                             alias->name);
-                    } else {
-                        /* loading was successful */
-                        INFO("loaded module %s due to uevents\n", alias->name);
-                        ret = 0;
-                        goto out;
-                    }
+                if (insmod_by_dep(alias->name, "", NULL, 1, NULL, MODULES_BLKLST)) {
+                    /* cannot load module. try another one since
+                     * there may be another match.
+                     */
+                    INFO("cannot load module %s due to uevents\n",
+                            alias->name);
+                } else {
+                    /* loading was successful */
+                    INFO("loaded module %s due to uevents\n", alias->name);
+                    ret = 0;
+                    goto out;
                 }
+
             }
         }
     }
@@ -779,12 +737,9 @@ static void handle_deferred_module_loading()
 
 int module_probe(const char *modalias)
 {
-    if (list_empty(&modules_aliases_map)) {
-        if (read_modules_aliases() == 0)
-            read_modules_blacklist();
-        else
+    if (list_empty(&modules_aliases_map))
+        if (parse_alias_to_list(MODULES_ALIAS, &modules_aliases_map) != 0)
             return -1;
-    }
 
     return load_module_by_device_modalias(modalias);
 }
@@ -798,8 +753,7 @@ static void handle_module_loading(const char *modalias)
      * we load all the deferred ones
      */
     if (list_empty(&modules_aliases_map)) {
-        if (read_modules_aliases() == 0) {
-            read_modules_blacklist();
+        if (parse_alias_to_list(MODULES_ALIAS, &modules_aliases_map) == 0) {
             handle_deferred_module_loading();
         }
     }
@@ -999,150 +953,6 @@ static void handle_firmware_event(struct uevent *uevent)
         process_firmware_event(uevent);
         exit(EXIT_SUCCESS);
     }
-}
-
-static void parse_line_module_alias(struct parse_state *state, int nargs, char **args)
-{
-    struct module_alias_node *node;
-
-    if (!args ||
-        (nargs != 3) ||
-        !args[0] || !args[1] || !args[2]) {
-        /* empty line or not enough arguments */
-        return;
-    }
-
-    node = calloc(1, sizeof(*node));
-    if (!node) return;
-
-    node->name = strdup(args[2]);
-    if (!node->name) {
-        free(node);
-        return;
-    }
-
-    node->pattern = strdup(args[1]);
-    if (!node->pattern) {
-        free(node->name);
-        free(node);
-        return;
-    }
-
-    list_add_tail(&modules_aliases_map, &node->list);
-}
-
-static void parse_line_module_blacklist(struct parse_state *state, int nargs, char **args)
-{
-    struct module_blacklist_node *node;
-
-    if (!args ||
-        (nargs != 2) ||
-        !args[0] || !args[1]) {
-        /* empty line or not enough arguments */
-        return;
-    }
-
-    /* this line does not being with "blacklist" */
-    if (strncmp(args[0], "blacklist", 9)) return;
-
-    node = calloc(1, sizeof(*node));
-    if (!node) return;
-
-    node->name = strdup(args[1]);
-    if (!node->name) {
-        free(node);
-        return;
-    }
-
-    list_add_tail(&modules_blacklist, &node->list);
-}
-
-static int __read_modules_desc_file(int mode)
-{
-    struct parse_state state;
-    char *args[3];
-    int nargs;
-    char *data = NULL;
-    char *fn;
-    int fd = -1;
-    int ret = -1;
-    int args_to_read = 0;
-
-    if (mode == READ_MODULES_ALIAS) {
-        /* read modules.alias */
-        if (asprintf(&fn, "%s", MODULES_ALIAS) <= 0) {
-            goto out;
-        }
-    } else if (mode == READ_MODULES_BLKLST) {
-        /* read modules.blacklist */
-        if (asprintf(&fn, "%s", MODULES_BLKLST) <= 0) {
-            goto out;
-        }
-    } else {
-        /* unknown mode */
-        goto out;
-    }
-
-    fd = open(fn, O_RDONLY);
-    if (fd == -1) {
-        goto out;
-    }
-
-    /* read the whole file */
-    data = read_file(fn, 0);
-    if (!data) {
-        goto out;
-    }
-
-    /* invoke tokenizer */
-    nargs = 0;
-    state.filename = fn;
-    state.line = 1;
-    state.ptr = data;
-    state.nexttoken = 0;
-    if (mode == READ_MODULES_ALIAS) {
-        state.parse_line = parse_line_module_alias;
-        args_to_read = 3;
-    } else if (mode == READ_MODULES_BLKLST) {
-        state.parse_line = parse_line_module_blacklist;
-        args_to_read = 2;
-    }
-    for (;;) {
-        int token = next_token(&state);
-        switch (token) {
-        case T_EOF:
-            state.parse_line(&state, 0, 0);
-            ret = 0;
-            goto out;
-        case T_NEWLINE:
-            if (nargs) {
-                state.parse_line(&state, nargs, args);
-                nargs = 0;
-            }
-            break;
-        case T_TEXT:
-            if (nargs < args_to_read) {
-                args[nargs++] = state.text;
-            }
-            break;
-        }
-    }
-    ret = 0;
-
-out:
-    if (fd != -1) {
-        close(fd);
-    }
-    free(data);
-    return ret;
-}
-
-static int read_modules_aliases() {
-    return __read_modules_desc_file(READ_MODULES_ALIAS);
-}
-
-static int read_modules_blacklist() {
-    return __read_modules_desc_file(READ_MODULES_BLKLST);
 }
 
 #define UEVENT_MSG_LEN  1024

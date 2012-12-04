@@ -25,9 +25,13 @@
 #include <string.h>
 #include <cutils/list.h>
 #include <stdlib.h>
+
+#define LOG_TAG "ModuleParsers"
 #include <cutils/log.h>
+
 #include <cutils/misc.h>
 #include <cutils/module_parsers.h>
+
 
 #define READ_MODULES_ALIAS  1
 #define READ_MODULES_BLKLST 2
@@ -51,7 +55,7 @@ struct parse_state
     void *priv;
 };
 
-int next_token(struct parse_state *state)
+static int next_token(struct parse_state *state)
 {
     char *x = state->ptr;
     char *s;
@@ -189,6 +193,7 @@ void free_alias_list(struct listnode *head)
 
 void free_black_list(struct listnode *head)
 {
+
     struct listnode *node = NULL;
     struct listnode *next = NULL;
     struct module_blacklist_node *black = NULL;
@@ -197,7 +202,6 @@ void free_black_list(struct listnode *head)
     {
         black = node_to_item(node, struct module_blacklist_node, list);
         if (black) {
-            ALOGI("free black list name [%s]\n", black->name);
             free(black->name);
             list_remove(node);
             free(black);
@@ -252,7 +256,7 @@ static void parse_line_module_blacklist(struct parse_state *state, int nargs, ch
         free(node);
         return;
     }
-    /* caller must get mutex first. */
+
     list_add_tail(head, &node->list);
 }
 
@@ -282,8 +286,9 @@ static void parse_line_module_alias(struct parse_state *state, int nargs, char *
         free(node);
         return;
     }
-    /* Caller must get mutex first. */
+
     list_add_tail(head, &node->list);
+
 }
 
 int module_parser(const char *file_name, int mode, struct listnode *head)

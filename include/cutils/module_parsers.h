@@ -14,12 +14,9 @@
  * limitations under the License.
  */
 
-/* parsers for module alias and blacklists */
+/* parsers for module loading */
 
 #include <cutils/list.h>
-
-#define READ_MODULES_ALIAS  1
-#define READ_MODULES_BLKLST 2
 
 struct module_alias_node {
     char *name;
