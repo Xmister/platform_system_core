@@ -48,11 +48,13 @@
 
 #ifdef __BIONIC__
 extern void*  __mmap2(void *, size_t, int, int, int, off_t);
-static inline void *mmap64(void *addr, size_t length, int prot, int flags,
+static inline void *_mmap64(void *addr, size_t length, int prot, int flags,
         int fd, off64_t offset)
 {
     return __mmap2(addr, length, prot, flags, fd, offset >> 12);
 }
+#else
+#define _mmap64 mmap64
 #endif
 
 #define min(a, b) \
@@ -714,7 +716,7 @@ int write_fd_chunk(struct output_file *out, unsigned int len,
 	buffer_size = len + aligned_diff;
 
 #ifndef USE_MINGW
-	char *data = mmap64(NULL, buffer_size, PROT_READ, MAP_SHARED, fd,
+	char *data = _mmap64(NULL, buffer_size, PROT_READ, MAP_SHARED, fd,
 			aligned_offset);
 	if (data == MAP_FAILED) {
 		return -errno;
