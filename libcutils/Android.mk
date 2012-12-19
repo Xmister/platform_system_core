@@ -52,6 +52,7 @@ commonSources := \
 	iosched_policy.c \
 	probe_module.c \
 	str_parms.c \
+	module_parsers.c \
 
 commonHostSources := \
         ashmem-host.c
