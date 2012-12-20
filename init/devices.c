@@ -680,7 +680,7 @@ static int load_module_by_device_modalias(const char *id)
 {
     struct listnode *alias_node;
     struct module_alias_node *alias;
-    int ret = -1;
+    int ret = MOD_DEP_NOT_FOUND;
 
     if (!id) goto out;
 
@@ -690,7 +690,8 @@ static int load_module_by_device_modalias(const char *id)
         if (alias && alias->name && alias->pattern) {
             if (fnmatch(alias->pattern, id, 0) == 0) {
                 INFO("trying to load module %s due to uevents\n", alias->name);
-                if (insmod_by_dep(alias->name, "", NULL, 1, NULL, MODULES_BLKLST)) {
+                ret = insmod_by_dep(alias->name, "", NULL, 1, NULL, MODULES_BLKLST);
+                if (ret != MOD_NO_ERR) {
                     /* cannot load module. try another one since
                      * there may be another match.
                      */
@@ -716,6 +717,7 @@ static void handle_deferred_module_loading()
     struct listnode *node = NULL;
     struct listnode *next = NULL;
     struct module_alias_node *alias = NULL;
+    int ret = -1;
 
     /* try to read the module alias mapping if map is empty
      * if succeed, loading all the modules in the queue
@@ -726,10 +728,14 @@ static void handle_deferred_module_loading()
 
             if (alias && alias->pattern) {
                 INFO("deferred loading of module for %s\n", alias->pattern);
-                load_module_by_device_modalias(alias->pattern);
-                free(alias->pattern);
-                list_remove(node);
-                free(alias);
+                ret = load_module_by_device_modalias(alias->pattern);
+                /* if it looks like file system where these files are is not
+                 * ready, keep the module in defer list for retry. */
+                if (!(ret & (MOD_BAD_DEP | MOD_INVALID_CALLER_BLACK | MOD_BAD_ALIAS))) {
+                    free(alias->pattern);
+                    list_remove(node);
+                    free(alias);
+                }
             }
         }
     }
@@ -778,6 +784,9 @@ static void handle_module_loading(const char *modalias)
             ERROR("failed to allocate memory to store device id for deferred module loading.\n");
         }
     } else {
+        /* TODO: we don't check ret here because we have checked if alias list is ready.
+         * so the black list and dep file should be ready too on FS, this logic will be
+         * refined in further patches with the change of alias parsing. */
         load_module_by_device_modalias(modalias);
     }
 
