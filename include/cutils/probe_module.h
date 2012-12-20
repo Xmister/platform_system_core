@@ -21,6 +21,17 @@
 extern "C" {
 #endif
 
+#define MOD_NO_ERR                  (0)         /* The operation is successful. */
+#define MOD_UNKNOWN                 (1 << 0)    /* unknown errors */
+#define MOD_IN_BLACK                (1 << 1)    /* A module is in base black list. */
+#define MOD_IN_CALLER_BLACK         (1 << 2)    /* A module is in caller's black list. */
+#define MOD_BAD_DEP                 (1 << 3)    /* Invalid module dependency file or it's parsing failed. */
+#define MOD_BAD_ALIAS               (1 << 4)    /* Invalid module alias file or it's parsing failed. */
+#define MOD_DEP_NOT_FOUND           (1 << 5)    /* Cannot find module's dependency chain */
+#define MOD_INVALID_CALLER_BLACK    (1 << 6)    /* Caller provides invalid black list or it's parsing failed. */
+#define MOD_INVALID_NAME            (1 << 7)    /* The module's name or alias is invalid */
+
+
 /* insmod_by_dep() - load a kernel module (target) with its dependency
  * The module's dependency must be described in the provided dependency file.
  * other modules in the dependency chain will be loaded prior to the target.
@@ -49,18 +60,18 @@ extern "C" {
  *              /system/lib/modules/modules.dep by default.
  *
  * blacklist  : A file of modules you don't want to loaded. It is optional.
- *              If the file name is provided, modules in it will be parsed
- *              and appended to the system's module black list which is from
- *              the base /etc/modules.blacklist. The base black list will
- *              always be appiled in insmod_by_dep(). This parameter provides
- *              a chance to callers to prevent more modules in a one-shot
- *              style. The typical format of a module in the black list file
- *              is like the below. Note, specify module's name instead of alias.
+ *              If a valid file is provided, modules in it will be parsed
+ *              and used along with the base module black list in insmod.c to
+ *              scan the dependency chain BEFORE any actual module loading.
+ *              The black list will always be applied in insmod_by_dep().
+ *              The typical format of a module in the black list file is shown
+ *              at below. Note, specify module's name instead of alias.
  *
  *              blacklist your_module_name
  *
- * return     : 0 for success; non-zero for any errors.
- *
+ * return     : 0 (MOD_NO_ERR) for success;
+ *              >0 refer to defined error macros in this file.
+ *              <0 errors returned from lower levels.
  * Note:
  * When loading modules, function will not fail for any modules which are
  * already in kernel. The module parameters passed to function will not be

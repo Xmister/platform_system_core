@@ -23,6 +23,7 @@
 #include <cutils/misc.h>
 #include <cutils/list.h>
 #include <cutils/module_parsers.h>
+#include <cutils/probe_module.h>
 
 #define LOG_TAG "ProbeModule"
 #include <cutils/log.h>
@@ -432,7 +433,6 @@ static void dump_black_list(struct listnode *black_list_head)
                                  list);
 
             ALOGE("DUMP BLACK: [%s]\n", blacklist->name);
-
     }
 }
 /* insmod_by_dep() interface to outside,
@@ -447,15 +447,17 @@ int insmod_by_dep(const char *module_name,
 {
     void *dep_file = NULL;
     char **dep = NULL;
-    int ret = -1;
+    int ret = MOD_UNKNOWN;
     list_declare(base_blacklist);
     list_declare(extra_blacklist);
 
     if (!module_name || *module_name == '\0') {
         ALOGE("need valid module name\n");
-        return ret;
+        return MOD_INVALID_NAME;
     }
 
+    /* We allow no base blacklist. */
+    /* TODO: tell different cases between no caller black list and parsing failures. */
     ret = parse_blacklist_to_list("/system/etc/modules.blacklist", &base_blacklist);
 
     if (ret)
@@ -466,8 +468,10 @@ int insmod_by_dep(const char *module_name,
         if (ret) {
             ALOGI("%s: parse extra black list error %d\n", __FUNCTION__, ret);
 
-            /* Extra black list from caller is optional, but when caller does
-             * give us an extra file and something's wrong with it, we will stop going further*/
+            /* A black list from caller is optional, but when caller does
+             * give us a file and something's wrong with it, we will stop going further*/
+            ret = MOD_INVALID_CALLER_BLACK;
+
             goto free_file;
         }
     }
@@ -475,6 +479,8 @@ int insmod_by_dep(const char *module_name,
 
     if (!dep_file) {
         ALOGE("cannot load dep file : %s\n", dep_name);
+        ret = MOD_BAD_DEP;
+
         goto free_file;
     }
 
@@ -482,16 +488,22 @@ int insmod_by_dep(const char *module_name,
 
     if (!dep) {
         ALOGE("%s: cannot find module's dependency info: [%s]\n", __FUNCTION__, module_name);
+        ret = MOD_DEP_NOT_FOUND;
+
         goto free_file;
     }
 
     if (is_dep_in_blacklist(dep, &extra_blacklist)) {
         ALOGE("%s: a module is in caller's black list, stop further loading\n", __FUNCTION__);
+        ret = MOD_IN_CALLER_BLACK;
+
         goto free_file;
     }
 
     if (is_dep_in_blacklist(dep, &base_blacklist)) {
         ALOGE("%s: a module is in system black list, stop further loading\n", __FUNCTION__);
+        ret = MOD_IN_BLACK;
+
         goto free_file;
     }
 
@@ -514,10 +526,12 @@ int rmmod_by_dep(const char *module_name,
 {
     void *dep_file;
     char **dep = NULL;
-    int ret = -1;
+    int ret = MOD_UNKNOWN;
 
     if (!module_name || *module_name == '\0') {
         ALOGE("need valid module name\n");
+        ret = MOD_INVALID_NAME;
+
         return ret;
     }
 
@@ -525,6 +539,8 @@ int rmmod_by_dep(const char *module_name,
 
     if (!dep_file) {
         ALOGE("cannot load dep file : %s\n", dep_name);
+        ret = MOD_BAD_DEP;
+
         return ret;
     }
 
@@ -532,6 +548,8 @@ int rmmod_by_dep(const char *module_name,
 
     if (!dep) {
         ALOGE("%s: cannot remove module: [%s]\n", __FUNCTION__, module_name);
+        ret = MOD_DEP_NOT_FOUND;
+
         goto free_file;
     }
 
