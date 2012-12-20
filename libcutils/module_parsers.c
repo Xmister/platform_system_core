@@ -25,6 +25,7 @@
 #include <string.h>
 #include <cutils/list.h>
 #include <stdlib.h>
+#include <fnmatch.h>
 
 #define LOG_TAG "ModuleParsers"
 #include <cutils/log.h>
@@ -182,7 +183,6 @@ void free_alias_list(struct listnode *head)
     {
         alias = node_to_item(node, struct module_alias_node, list);
         if (alias) {
-            ALOGI("free alias name [%s] pattern [%s]\n", alias->name, alias->pattern);
             free(alias->pattern);
             free(alias->name);
             list_remove(node);
@@ -209,6 +209,32 @@ void free_black_list(struct listnode *head)
     }
 }
 
+int get_module_name_from_alias(const char *id, char **name, struct listnode *alias_list)
+{
+    struct listnode *alias_node;
+    struct module_alias_node *alias;
+    int ret = -1;
+
+    if (!id)
+        return ret;
+
+    list_for_each(alias_node, alias_list)
+    {
+        alias = node_to_item(alias_node, struct module_alias_node, list);
+        if (alias && alias->name && alias->pattern) {
+            if (fnmatch(alias->pattern, id, 0) == 0) {
+                if (asprintf(name, "%s", alias->name) < 0)
+                    *name = NULL;
+                else
+                    ret = 0;
+
+                break;
+            }
+        }
+    }
+
+    return ret;
+}
 
 int is_module_blacklisted(const char *name, struct listnode *black_list_head)
 {
@@ -216,7 +242,8 @@ int is_module_blacklisted(const char *name, struct listnode *black_list_head)
     struct module_blacklist_node *blacklist;
     int ret = 0;
 
-    if (!name) goto out;
+    if (!name)
+        return ret;
 
     /* See if module is blacklisted, skip if it is */
     list_for_each(blklst_node, black_list_head) {
@@ -226,11 +253,11 @@ int is_module_blacklisted(const char *name, struct listnode *black_list_head)
         if (!strcmp(name, blacklist->name)) {
             ALOGI("modules %s is blacklisted\n", name);
             ret = 1;
-            goto out;
+
+            break;
         }
     }
 
-out:
     return ret;
 }
 
@@ -238,18 +265,19 @@ static void parse_line_module_blacklist(struct parse_state *state, int nargs, ch
 {
     struct module_blacklist_node *node;
 
+    /* empty line or not enough arguments */
     if (!args ||
         (nargs != 2) ||
-        !args[0] || !args[1]) {
-        /* empty line or not enough arguments */
+            !args[0] || !args[1])
         return;
-    }
 
     /* this line does not begin with "blacklist" */
-    if (strncmp(args[0], "blacklist", 9)) return;
+    if (strncmp(args[0], "blacklist", 9))
+        return;
 
     node = calloc(1, sizeof(*node));
-    if (!node) return;
+    if (!node)
+        return;
 
     node->name = strdup(args[1]);
     if (!node->name) {
@@ -264,15 +292,15 @@ static void parse_line_module_alias(struct parse_state *state, int nargs, char *
 {
     struct module_alias_node *node;
 
+    /* empty line or not enough arguments */
     if (!args ||
         (nargs != 3) ||
-        !args[0] || !args[1] || !args[2]) {
-        /* empty line or not enough arguments */
+            !args[0] || !args[1] || !args[2])
         return;
-    }
 
     node = calloc(1, sizeof(*node));
-    if (!node) return;
+    if (!node)
+        return;
 
     node->name = strdup(args[2]);
     if (!node->name) {
@@ -303,24 +331,20 @@ int module_parser(const char *file_name, int mode, struct listnode *head)
 
     if (mode == READ_MODULES_ALIAS) {
         /* read modules.alias */
-        if (asprintf(&fn, "%s", file_name) <= 0) {
+        if (asprintf(&fn, "%s", file_name) <= 0)
             goto out;
-        }
+
     } else if (mode == READ_MODULES_BLKLST) {
         /* read modules.blacklist */
-        if (asprintf(&fn, "%s", file_name) <= 0) {
+        if (asprintf(&fn, "%s", file_name) <= 0)
             goto out;
-        }
-    } else {
-        /* unknown mode */
+    } else /* unknown mode */
         return ret;
-    }
 
     /* read the whole file */
     data = load_file(fn, 0);
-    if (!data) {
+    if (!data)
         goto out;
-    }
 
     /* invoke tokenizer */
     nargs = 0;

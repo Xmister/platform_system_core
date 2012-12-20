@@ -447,13 +447,25 @@ int insmod_by_dep(const char *module_name,
 {
     void *dep_file = NULL;
     char **dep = NULL;
+    char *mod_name = NULL;
     int ret = MOD_UNKNOWN;
     list_declare(base_blacklist);
     list_declare(extra_blacklist);
+    list_declare(alias_list);
 
     if (!module_name || *module_name == '\0') {
         ALOGE("need valid module name\n");
+
         return MOD_INVALID_NAME;
+    }
+
+    ret = parse_alias_to_list("/system/lib/modules/modules.alias", &alias_list);
+
+    if (ret) {
+        ALOGE("%s: parse alias error %d\n", __FUNCTION__, ret);
+        ret = MOD_BAD_ALIAS;
+
+        goto free_file;
     }
 
     /* We allow no base blacklist. */
@@ -484,6 +496,10 @@ int insmod_by_dep(const char *module_name,
         goto free_file;
     }
 
+    /* check if module name is an alias. */
+    if (!get_module_name_from_alias(module_name, &mod_name, &alias_list))
+        module_name = mod_name;
+
     dep = look_up_dep(module_name, dep_file);
 
     if (!dep) {
@@ -510,8 +526,10 @@ int insmod_by_dep(const char *module_name,
     ret = insmod_s(dep, args, strip, base);
 
 free_file:
+    free(mod_name);
     free(dep);
     free(dep_file);
+    free_alias_list(&alias_list);
     free_black_list(&base_blacklist);
     free_black_list(&extra_blacklist);
 

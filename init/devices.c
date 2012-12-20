@@ -45,19 +45,17 @@
 #include <cutils/list.h>
 #include <cutils/probe_module.h>
 #include <cutils/uevent.h>
+#include <cutils/module_parsers.h>
 
 #include "devices.h"
 #include "util.h"
 #include "log.h"
 #include "parser.h"
 
-#include <cutils/module_parsers.h>
-
 #define SYSFS_PREFIX    "/sys"
 #define FIRMWARE_DIR1   "/etc/firmware"
 #define FIRMWARE_DIR2   "/vendor/firmware"
 #define FIRMWARE_DIR3   "/firmware/image"
-#define MODULES_ALIAS   "/system/lib/modules/modules.alias"
 #define MODULES_BLKLST  "/system/etc/ueventd.modules.blacklist"
 
 #ifdef HAVE_SELINUX
@@ -102,7 +100,6 @@ struct platform_node {
 static list_declare(sys_perms);
 static list_declare(dev_perms);
 static list_declare(platform_names);
-static list_declare(modules_aliases_map);
 static list_declare(deferred_module_loading_list);
 
 int add_dev_perms(const char *name, const char *attr,
@@ -676,42 +673,6 @@ static void handle_generic_device_event(struct uevent *uevent)
              uevent->major, uevent->minor, links);
 }
 
-static int load_module_by_device_modalias(const char *id)
-{
-    struct listnode *alias_node;
-    struct module_alias_node *alias;
-    int ret = MOD_DEP_NOT_FOUND;
-
-    if (!id) goto out;
-
-    list_for_each(alias_node, &modules_aliases_map) {
-        alias = node_to_item(alias_node, struct module_alias_node, list);
-
-        if (alias && alias->name && alias->pattern) {
-            if (fnmatch(alias->pattern, id, 0) == 0) {
-                INFO("trying to load module %s due to uevents\n", alias->name);
-                ret = insmod_by_dep(alias->name, "", NULL, 1, NULL, MODULES_BLKLST);
-                if (ret != MOD_NO_ERR) {
-                    /* cannot load module. try another one since
-                     * there may be another match.
-                     */
-                    INFO("cannot load module %s due to uevents\n",
-                            alias->name);
-                } else {
-                    /* loading was successful */
-                    INFO("loaded module %s due to uevents\n", alias->name);
-                    ret = 0;
-                    goto out;
-                }
-
-            }
-        }
-    }
-
-out:
-    return ret;
-}
-
 static void handle_deferred_module_loading()
 {
     struct listnode *node = NULL;
@@ -719,23 +680,19 @@ static void handle_deferred_module_loading()
     struct module_alias_node *alias = NULL;
     int ret = -1;
 
-    /* try to read the module alias mapping if map is empty
-     * if succeed, loading all the modules in the queue
-     */
-    if (!list_empty(&modules_aliases_map)) {
-        list_for_each_safe(node, next, &deferred_module_loading_list) {
-            alias = node_to_item(node, struct module_alias_node, list);
+    list_for_each_safe(node, next, &deferred_module_loading_list) {
+        alias = node_to_item(node, struct module_alias_node, list);
 
-            if (alias && alias->pattern) {
-                INFO("deferred loading of module for %s\n", alias->pattern);
-                ret = load_module_by_device_modalias(alias->pattern);
-                /* if it looks like file system where these files are is not
-                 * ready, keep the module in defer list for retry. */
-                if (!(ret & (MOD_BAD_DEP | MOD_INVALID_CALLER_BLACK | MOD_BAD_ALIAS))) {
-                    free(alias->pattern);
-                    list_remove(node);
-                    free(alias);
-                }
+        if (alias && alias->pattern) {
+            INFO("deferred loading of module for %s\n", alias->pattern);
+            ret = insmod_by_dep(alias->pattern, "", NULL, 1, NULL,
+                    MODULES_BLKLST);
+            /* if it looks like file system where these files are is not
+             * ready, keep the module in defer list for retry. */
+            if (!(ret & (MOD_BAD_DEP | MOD_INVALID_CALLER_BLACK | MOD_BAD_ALIAS))) {
+                free(alias->pattern);
+                list_remove(node);
+                free(alias);
             }
         }
     }
@@ -743,33 +700,23 @@ static void handle_deferred_module_loading()
 
 int module_probe(const char *modalias)
 {
-    if (list_empty(&modules_aliases_map))
-        if (parse_alias_to_list(MODULES_ALIAS, &modules_aliases_map) != 0)
-            return -1;
-
-    return load_module_by_device_modalias(modalias);
+    return insmod_by_dep(modalias, "", NULL, 1, NULL, NULL);    /* not to reuse ueventd's black list. */
 }
 
 static void handle_module_loading(const char *modalias)
 {
     char *tmp;
     struct module_alias_node *node;
+    int ret;
 
-    /* once modules.alias can be read,
-     * we load all the deferred ones
-     */
-    if (list_empty(&modules_aliases_map)) {
-        if (parse_alias_to_list(MODULES_ALIAS, &modules_aliases_map) == 0) {
-            handle_deferred_module_loading();
-        }
-    }
+
+    handle_deferred_module_loading();
 
     if (!modalias) return;
 
-    if (list_empty(&modules_aliases_map)) {
-        /* if module alias mapping is empty,
-         * queue it for loading later
-         */
+    ret = insmod_by_dep(modalias, "", NULL, 1, NULL, MODULES_BLKLST);
+
+    if (ret & (MOD_BAD_DEP | MOD_INVALID_CALLER_BLACK | MOD_BAD_ALIAS)) {
         node = calloc(1, sizeof(*node));
         if (node) {
             node->pattern = strdup(modalias);
@@ -783,13 +730,7 @@ static void handle_module_loading(const char *modalias)
         } else {
             ERROR("failed to allocate memory to store device id for deferred module loading.\n");
         }
-    } else {
-        /* TODO: we don't check ret here because we have checked if alias list is ready.
-         * so the black list and dep file should be ready too on FS, this logic will be
-         * refined in further patches with the change of alias parsing. */
-        load_module_by_device_modalias(modalias);
     }
-
 }
 
 static void handle_device_event(struct uevent *uevent)
