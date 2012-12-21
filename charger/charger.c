@@ -138,6 +138,9 @@ struct uevent {
     const char *ps_online;
 };
 
+/* Needed by minui */
+char *locale;
+
 static struct frame batt_anim_frames[] = {
     {
         .name = "charger/battery_0",
