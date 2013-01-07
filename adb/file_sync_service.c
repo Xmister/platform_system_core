@@ -315,6 +315,9 @@ static int do_send(int s, char *path, char *buffer)
 
         fs_config(tmp, 0, &uid, &gid, &mode);
         ret = handle_send_file(s, path, mode, buffer);
+        if (ret != -1) {
+            ret = adb_chown(path, uid, gid);
+        }
     }
 
     return ret;
