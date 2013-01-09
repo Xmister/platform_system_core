@@ -14,6 +14,7 @@
  * limitations under the License.
  */
 
+#include <errno.h>
 #include <poll.h>
 #include <fcntl.h>
 #include <string.h>
@@ -21,9 +22,11 @@
 #include <stdio.h>
 #include <ctype.h>
 #include <signal.h>
+#include <sys/system_properties.h>
 #include <libgen.h>
 #include <errno.h>
 #include <private/android_filesystem_config.h>
+#include <cutils/list.h>
 
 #include "ueventd.h"
 #include "log.h"
@@ -48,10 +51,36 @@ static void import_kernel_nv(char *name, int in_qemu)
     }
 }
 
+int handle_pending_properties()
+{
+    int all_sets_succeeded = 1;
+    struct listnode *node;
+    struct listnode *next;
+    list_for_each_safe(node, next, &pending_properties) {
+        struct property *dp = &(node_to_item(node, struct prop_node,
+                                             plist))->property;
+        {
+            int rv = __system_property_set(dp->name, dp->value);
+            if (!rv) {
+                list_remove(node);
+                free_property_node(node_to_item(node, struct prop_node,
+                                                plist));
+            } else {
+                all_sets_succeeded = 0;
+                ERROR("__system_property_set(%s, %s) returned %d."
+                      " errno=%d.\n",
+                      dp->name, dp->value, rv, (rv) ? errno : 0);
+            }
+        }
+    }
+    return all_sets_succeeded;
+}
+
 int ueventd_main(int argc, char **argv)
 {
     struct pollfd ufd;
     int nr;
+    int poll_timeout = -1; /* wait forever */
     char tmp[32];
 
     /* kernel will launch a program in user space to load
@@ -116,11 +145,23 @@ int ueventd_main(int argc, char **argv)
 
     while(1) {
         ufd.revents = 0;
-        nr = poll(&ufd, 1, -1);
-        if (nr <= 0)
+        nr = poll(&ufd, 1, poll_timeout);
+        if (nr < 0)
             continue;
-        if (ufd.revents == POLLIN)
-               handle_device_fd();
+        if (nr > 0 && ufd.revents == POLLIN)
+            handle_device_fd();
+        if (nr >= 0) {
+            if (handle_pending_properties()) {
+                poll_timeout = -1;
+            } else {
+                /* handle_pending_properties() can fail if uevents happen
+                 * before the system properties are ready to handle setting.
+                 * Attempt to set them later without relying on subsequent
+                 * events.
+                 */
+                poll_timeout = 1000; /* milliseconds */
+            }
+        }
     }
 }
 
@@ -137,10 +178,11 @@ void set_device_permission(int nargs, char **args)
 {
     char *name;
     char *attr = 0;
+    char *prop = 0;
+    char uevent_prop[PROP_NAME_MAX+1];
     mode_t perm;
     uid_t uid;
     gid_t gid;
-    int wildcard = 0;
     char *endptr;
     int ret;
     char *tmp = 0;
@@ -152,6 +194,20 @@ void set_device_permission(int nargs, char **args)
         return;
 
     name = args[0];
+
+    if (!strncmp(name,"/sys/", 5) && !strncmp(args[nargs-1], TRIGGER_PREFIX,
+                                              TRIGGER_PREFIX_STRLEN)) {
+        INFO("/sys/ trigger rule %s ... %s\n",args[0],args[nargs-1]);
+        prop = &args[nargs-1][TRIGGER_PREFIX_STRLEN];
+        if ((strlen(UEVENT_PROPERTY_PREFIX) + strlen(prop)) > PROP_NAME_MAX) {
+            ERROR("%s%s exceeds maximum property name length.\n", UEVENT_PROPERTY_PREFIX, prop);
+            return;
+        }
+        strcpy(uevent_prop, UEVENT_PROPERTY_PREFIX);
+        strcat(uevent_prop, prop);
+        prop = uevent_prop;
+        nargs--;
+    }
 
     if (!strncmp(name,"/sys/", 5) && (nargs == 5)) {
         INFO("/sys/ rule %s %s\n",args[0],args[1]);
@@ -171,10 +227,6 @@ void set_device_permission(int nargs, char **args)
         if (n >= 0)
             asprintf(&tmp, "/dev/mtd/mtd%d", n);
         name = tmp;
-    } else {
-        if (strchr(name, '*')) {
-            wildcard = 1;
-        }
     }
 
     perm = strtol(args[1], &endptr, 8);
@@ -200,6 +252,6 @@ void set_device_permission(int nargs, char **args)
     }
     gid = ret;
 
-    add_dev_perms(name, attr, perm, uid, gid, wildcard);
+    add_dev_perms(name, attr, perm, uid, gid, prop);
     free(tmp);
 }
