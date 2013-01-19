@@ -26,7 +26,6 @@
 #include <dirent.h>
 #include <unistd.h>
 #include <string.h>
-#include <fnmatch.h>
 
 #include <sys/socket.h>
 #include <sys/un.h>
@@ -84,7 +83,7 @@ struct perms_ {
     mode_t perm;
     unsigned int uid;
     unsigned int gid;
-    char *prop;
+    unsigned short wildcard;
 };
 
 struct perm_node {
@@ -98,72 +97,32 @@ struct platform_node {
     struct listnode list;
 };
 
-/* Because uevents arrive from the kernel before the init process has
- * opened the property file descriptor, and some uevents optionally set
- * properties, properties are queued here for retries. */
-list_declare(pending_properties);
 static list_declare(sys_perms);
 static list_declare(dev_perms);
 static list_declare(platform_names);
 static list_declare(deferred_module_loading_list);
 
-int add_pending_property(const char *name, const char *value) {
-    struct prop_node *pnode = calloc(1, sizeof(*pnode));
-    if (!pnode)
-        goto alloc_err;
-
-    pnode->property.name = strdup(name);
-    if (!pnode->property.name)
-        goto alloc_err;
-
-    pnode->property.value = strdup(value);
-    if (!pnode->property.value)
-        goto alloc_err;
-
-    list_add_tail(&pending_properties, &pnode->plist);
-    return 0;
-
-alloc_err:
-    free_property_node(pnode);
-    return -ENOMEM;
-}
-
-void free_property_node(struct prop_node *pnode) {
-    if (!pnode)
-        return;
-
-    struct property *dp = &(node_to_item(pnode, struct prop_node, property))->property;
-    free(dp->name);
-    free(dp->value);
-    free(pnode);
-}
-
 int add_dev_perms(const char *name, const char *attr,
                   mode_t perm, unsigned int uid, unsigned int gid,
-                  const char *prop) {
+                  unsigned short wildcard) {
     struct perm_node *node = calloc(1, sizeof(*node));
     if (!node)
-        goto alloc_err;
+        return -ENOMEM;
 
     node->dp.name = strdup(name);
     if (!node->dp.name)
-        goto alloc_err;
+        return -ENOMEM;
 
     if (attr) {
         node->dp.attr = strdup(attr);
         if (!node->dp.attr)
-            goto alloc_err;
-    }
-
-    if (prop) {
-        node->dp.prop = strdup(prop);
-        if (!node->dp.prop)
-            goto alloc_err;
+            return -ENOMEM;
     }
 
     node->dp.perm = perm;
     node->dp.uid = uid;
     node->dp.gid = gid;
+    node->dp.wildcard = wildcard;
 
     if (attr)
         list_add_tail(&sys_perms, &node->plist);
@@ -171,19 +130,10 @@ int add_dev_perms(const char *name, const char *attr,
         list_add_tail(&dev_perms, &node->plist);
 
     return 0;
-
-alloc_err:
-    if (node) {
-        free (node->dp.attr);
-        free (node->dp.name);
-        free (node);
-    }
-    return -ENOMEM;
 }
 
-void fixup_sys_perms(struct uevent *uevent)
+void fixup_sys_perms(const char *upath)
 {
-    const char *upath = uevent->path;
     char buf[512];
     struct listnode *node;
     struct perms_ *dp;
@@ -193,21 +143,21 @@ void fixup_sys_perms(struct uevent *uevent)
          */
     list_for_each(node, &sys_perms) {
         dp = &(node_to_item(node, struct perm_node, plist))->dp;
-        if (fnmatch(dp->name + 4, upath, 0) != 0)
-            continue;
+        if (dp->wildcard) {
+            if (fnmatch(dp->name + 4, upath, 0) != 0)
+                continue;
+        } else {
+            if (strcmp(upath, dp->name + 4))
+                continue;
+        }
 
         if ((strlen(upath) + strlen(dp->attr) + 6) > sizeof(buf))
             return;
 
-        if (!strcmp(uevent->action, "add") || !strcmp(uevent->action, "change")) {
-            sprintf(buf,"/sys%s/%s", upath, dp->attr);
-            INFO("fixup %s %d %d 0%o\n", buf, dp->uid, dp->gid, dp->perm);
-            chown(buf, dp->uid, dp->gid);
-            chmod(buf, dp->perm);
-        }
-        if (dp->prop) {
-            add_pending_property(dp->prop, uevent->action);
-        }
+        sprintf(buf,"/sys%s/%s", upath, dp->attr);
+        INFO("fixup %s %d %d 0%o\n", buf, dp->uid, dp->gid, dp->perm);
+        chown(buf, dp->uid, dp->gid);
+        chmod(buf, dp->perm);
     }
 }
 
@@ -225,8 +175,13 @@ static mode_t get_device_perm(const char *path, unsigned *uid, unsigned *gid)
         perm_node = node_to_item(node, struct perm_node, plist);
         dp = &perm_node->dp;
 
-        if (fnmatch(dp->name, path, 0) != 0)
-            continue;
+        if (dp->wildcard) {
+            if (fnmatch(dp->name, path, 0) != 0)
+                continue;
+        } else {
+            if (strcmp(path, dp->name))
+                continue;
+        }
         *uid = dp->uid;
         *gid = dp->gid;
         return dp->perm;
@@ -782,9 +737,8 @@ static void handle_device_event(struct uevent *uevent)
         handle_module_loading(uevent->modalias);
     }
 
-    if (!strcmp(uevent->action,"add") || !strcmp(uevent->action, "change") ||
-        !strcmp(uevent->action,"remove"))
-        fixup_sys_perms(uevent);
+    if (!strcmp(uevent->action,"add") || !strcmp(uevent->action, "change"))
+        fixup_sys_perms(uevent->path);
 
     if (!strncmp(uevent->subsystem, "block", 5)) {
         handle_block_device_event(uevent);
