@@ -509,6 +509,7 @@ static void handle_device(const char *action, const char *devpath,
     if(!strcmp(action, "add")) {
         if (major >= 0 && minor >= 0)
             make_device(devpath, path, block, major, minor);
+        __system_property_set("ctl.dev_added",devpath);
         if (links) {
             for (i = 0; links[i]; i++)
                 make_link(devpath, links[i]);
@@ -520,6 +521,7 @@ static void handle_device(const char *action, const char *devpath,
             for (i = 0; links[i]; i++)
                 remove_link(devpath, links[i]);
         }
+        __system_property_set("ctl.dev_removed",devpath);
         if (major >= 0 && minor >= 0)
             unlink(devpath);
     }
