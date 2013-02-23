@@ -183,11 +183,6 @@ raw_cat(int rfd)
 	}
 }
 
-#ifdef WITH_HOUDINI
-#define APP_WITH_ABI2 "/data/data/.appwithABI2"
-#define ARM_CPUINFO "/system/lib/arm/cpuinfo"
-#endif
-
 static void
 raw_args(char **argv)
 {
@@ -224,26 +219,6 @@ skipnomsg:
 				continue;
 			}
 			filename = *argv++;
-
-#ifdef WITH_HOUDINI
-			if (!strcmp(filename, "/proc/cpuinfo")) {
-				int uid_fd;
-				uid_t uid, my_uid;
-				uid_fd = open(APP_WITH_ABI2, O_RDONLY);
-				if (uid_fd != -1) {
-					my_uid = getuid();
-					while (read(uid_fd, &uid, 4) != 0) {
-						if (uid == my_uid) {
-							if (fd >= 0)
-								close(fd);
-							fd = open(ARM_CPUINFO, O_RDONLY);
-							break;
-						}
-					}
-					close(uid_fd);
-				}
-			}
-#endif
 		}
 		raw_cat(fd);
 		if (fd != fileno(stdin))
