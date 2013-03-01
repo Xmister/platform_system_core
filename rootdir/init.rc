@@ -123,6 +123,8 @@ loglevel 3
 # Allow everybody to read the xt_qtaguid resource tracking misc dev.
 # This is needed by any process that uses socket tagging.
     chmod 0644 /dev/xt_qtaguid
+# Change group of ctrl, make mediaserver pass xt_qtaguid permision check.
+    chown root net_bw_acct /proc/net/xt_qtaguid/ctrl
 
 on fs
 # mount mtd partitions
