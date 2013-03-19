@@ -574,10 +574,9 @@ static void handle_block_device_event(struct uevent *uevent)
     snprintf(devpath, sizeof(devpath), "%s%s", base, name);
     make_dir(base, 0755);
 
-    if (!strncmp(uevent->path, "/devices/platform/", 18))
+    links = parse_gpt_block_device(uevent);
+    if (!links && !strncmp(uevent->path, "/devices/platform/", 18))
         links = parse_platform_block_device(uevent);
-    else
-        links = parse_gpt_block_device(uevent);
 
     handle_device(uevent->action, devpath, uevent->path, 1,
             uevent->major, uevent->minor, links);
