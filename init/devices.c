@@ -72,6 +72,7 @@ struct uevent {
     const char *partition_name;
     const char *device_name;
     const char *modalias;
+    const char *product;
     int partition_num;
     int major;
     int minor;
@@ -321,7 +322,7 @@ static void parse_event(const char *msg, struct uevent *uevent)
     uevent->partition_num = -1;
     uevent->device_name = NULL;
     uevent->modalias = NULL;
-
+    uevent->product = NULL;
         /* currently ignoring SEQNUM */
     while(*msg) {
         if(!strncmp(msg, "ACTION=", 7)) {
@@ -351,6 +352,9 @@ static void parse_event(const char *msg, struct uevent *uevent)
         } else if(!strncmp(msg, "DEVNAME=", 8)) {
             msg += 8;
             uevent->device_name = msg;
+        } else if(!strncmp(msg, "PRODUCT=", 8)) {
+            msg += 8;
+            uevent->product = msg;
         } else if(!strncmp(msg, "MODALIAS=", 9)) {
             msg += 9;
             uevent->modalias = msg;
@@ -732,6 +736,35 @@ static void handle_module_loading(const char *modalias)
     }
 }
 
+static void fixup_device_perms(struct uevent *uevent)
+{
+    int i, retval;
+    /* O(n) search to set the permission of device */
+    if((dev_index) && (uevent->product!=NULL)) {
+        for (i = 0; i < dev_index; i++) {
+            if(!strncmp(uevent->product,dev_id[i].dev_name,strlen(dev_id[i].dev_name))) {
+                if (uevent->device_name != NULL) {
+                    char *dev_path = malloc((6+strlen(uevent->device_name)));
+                    if (dev_path == NULL) {
+                        ERROR("Memory allocation failed for Dev path \n");
+                    }
+                    strcpy(dev_path, "/dev/");
+                    strcat(dev_path, uevent->device_name);
+                    retval = chown(dev_path, dev_id[i].user_config,
+                          dev_id[i].grp_config);
+                    if (retval != 0)
+                        ERROR("chown: %s\n", strerror(errno));
+                    retval = chmod(dev_path, dev_id[i].perm);
+                    if (retval != 0)
+                        ERROR("chmod: %s\n", strerror(errno));
+                    free(dev_path);
+                }
+                break;
+            }
+        }
+    }
+}
+
 static void handle_device_event(struct uevent *uevent)
 {
     if (!strcmp(uevent->action,"add")) {
@@ -747,6 +780,10 @@ static void handle_device_event(struct uevent *uevent)
         handle_platform_device_event(uevent);
     } else {
         handle_generic_device_event(uevent);
+    }
+
+    if (!strcmp(uevent->action,"add")) {
+        fixup_device_perms(uevent);
     }
 }
 

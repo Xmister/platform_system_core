@@ -31,8 +31,12 @@
 #include "devices.h"
 #include "ueventd_parser.h"
 
+#define UEV_VPID "__uevent_add_VID_PID__"
+
 static char hardware[32];
 static unsigned revision = 0;
+int dev_index = 0;
+struct dev_prop dev_id[MAX_DEV];
 
 static void import_kernel_nv(char *name, int in_qemu)
 {
@@ -152,6 +156,25 @@ void set_device_permission(int nargs, char **args)
         return;
 
     name = args[0];
+
+    if (!strncmp(name, UEV_VPID, strlen(UEV_VPID))) {
+        if (dev_index < MAX_DEV) {
+            if (strlen(args[1]) < DEV_NAME_LEN) {
+                strcpy(dev_id[dev_index].dev_name, args[1]);
+            } else {
+                 ERROR("String too long in ueventd.rc line for '%s'\n", args[1]);
+                 return;
+            }
+            dev_id[dev_index].grp_config = get_android_id(args[3]);
+            dev_id[dev_index].user_config = get_android_id(args[4]);
+            dev_id[dev_index].perm = strtol(args[2], &endptr, 8);
+            dev_index++;
+        } else {
+            NOTICE("%s entry %d is ignored as it exceeds MAX dev supported (%d)\n",
+                 UEV_VPID, dev_index , MAX_DEV);
+        }
+        return;
+    }
 
     if (!strncmp(name,"/sys/", 5) && (nargs == 5)) {
         INFO("/sys/ rule %s %s\n",args[0],args[1]);
