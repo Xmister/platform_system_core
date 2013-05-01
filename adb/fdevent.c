@@ -28,23 +28,22 @@
 #include <stdarg.h>
 #include <stddef.h>
 
+#define  TRACE_TAG   TRACE_FDEVENT
+
 #include "fdevent.h"
 #include "transport.h"
 #include "sysdeps.h"
+#include "adb.h"
 
 
-/* !!! Do not enable DEBUG for the adb that will run as the server:
-** both stdout and stderr are used to communicate between the client
-** and server. Any extra output will cause failures.
-*/
-#define DEBUG 0   /* non-0 will break adb server */
+#define DEBUG 0
 
 // This socket is used when a subproc shell service exists.
 // It wakes up the fdevent_loop() and cause the correct handling
 // of the shell's pseudo-tty master. I.e. force close it.
 int SHELL_EXIT_NOTIFY_FD = -1;
 
-static void fatal(const char *fn, const char *fmt, ...)
+static void ffatal(const char *fn, const char *fmt, ...)
 {
     va_list ap;
     va_start(ap, fmt);
@@ -54,19 +53,10 @@ static void fatal(const char *fn, const char *fmt, ...)
     abort();
 }
 
-#define FATAL(x...) fatal(__FUNCTION__, x)
+
+#define FATAL(x...) ffatal(__FUNCTION__, x)
 
 #if DEBUG
-#define D(...) \
-    do { \
-        adb_mutex_lock(&D_lock);               \
-        int save_errno = errno;                \
-        fprintf(stderr, "%s::%s():", __FILE__, __FUNCTION__);  \
-        errno = save_errno;                    \
-        fprintf(stderr, __VA_ARGS__);          \
-        adb_mutex_unlock(&D_lock);             \
-        errno = save_errno;                    \
-    } while(0)
 static void dump_fde(fdevent *fde, const char *info)
 {
     adb_mutex_lock(&D_lock);
@@ -78,7 +68,6 @@ static void dump_fde(fdevent *fde, const char *info)
     adb_mutex_unlock(&D_lock);
 }
 #else
-#define D(...) ((void)0)
 #define dump_fde(fde, info) do { } while(0)
 #endif
 

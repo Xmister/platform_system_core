@@ -18,6 +18,7 @@
 #define __ADB_H
 
 #include <limits.h>
+#include <libgen.h>
 
 #include "transport.h"  /* readx(), writex() */
 
@@ -359,6 +360,7 @@ typedef enum {
     TRACE_JDWP,      /* 0x100 */
     TRACE_SERVICES,
     TRACE_AUTH,
+    TRACE_FDEVENT,
 } AdbTrace;
 
 #if ADB_TRACE
@@ -390,8 +392,10 @@ void adb_qemu_trace(const char* fmt, ...);
             if (ADB_TRACING) {                         \
                 int save_errno = errno;                \
                 adb_mutex_lock(&D_lock);               \
-                fprintf(stderr, "%s::%s():",           \
-                        __FILE__, __FUNCTION__);       \
+                fprintf(stderr, "%d::%s::%s():",       \
+                        getpid(),                      \
+                        basename(__FILE__),            \
+                        __FUNCTION__);                 \
                 errno = save_errno;                    \
                 fprintf(stderr, __VA_ARGS__ );         \
                 fflush(stderr);                        \

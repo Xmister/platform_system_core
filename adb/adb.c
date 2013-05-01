@@ -105,6 +105,7 @@ void  adb_trace_init(void)
         { "jdwp", TRACE_JDWP },
         { "services", TRACE_SERVICES },
         { "auth", TRACE_AUTH },
+        { "fdevents", TRACE_FDEVENT },
         { NULL, 0 }
     };
 
@@ -1009,10 +1010,9 @@ int launch_server(int server_port)
     if (pid == 0) {
         // child side of the fork
 
-        // redirect stderr to the pipe
-        // we use stderr instead of stdout due to stdout's buffering behavior.
+        // redirect stdout to the pipe
         adb_close(fd[0]);
-        dup2(fd[1], STDERR_FILENO);
+        dup2(fd[1], STDOUT_FILENO);
         adb_close(fd[1]);
 
         char str_port[30];
@@ -1229,7 +1229,8 @@ int adb_main(int is_daemon, int server_port)
         DWORD  count;
         WriteFile( GetStdHandle( STD_OUTPUT_HANDLE ), "OK\n", 3, &count, NULL );
 #elif defined(HAVE_FORKEXEC)
-        fprintf(stderr, "OK\n");
+        fprintf(stdout, "OK\n");
+        fflush(stdout);
 #endif
         start_logging();
     }
