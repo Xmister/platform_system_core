@@ -164,6 +164,7 @@ int local_connect_arbitrary_ports(int console_port, int adb_port)
         D("client: connected on remote on fd %d\n", fd);
         close_on_exec(fd);
         disable_tcp_nagle(fd);
+        enable_keepalive(fd);
         snprintf(buf, sizeof buf, "%s%d", LOCAL_CLIENT_PREFIX, console_port);
         register_socket_transport(fd, buf, adb_port, 1);
         return 0;
@@ -220,6 +221,7 @@ static void *server_socket_thread(void * arg)
 #endif
             close_on_exec(fd);
             disable_tcp_nagle(fd);
+            enable_keepalive(fd);
             register_socket_transport(fd, "host", port, 1);
         }
     }

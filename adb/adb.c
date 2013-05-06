@@ -491,6 +491,135 @@ void parse_banner(char *banner, atransport *t)
     t->connection_state = CS_HOST;
 }
 
+#if ADB_HOST
+/* Structure that binds reconnection threads to
+** the serial data so we can track subsequent
+** connect/disconnect calls and stop reconnecting */
+
+#define HOSTLEN 30
+
+typedef struct reconnector reconnector;
+struct reconnector
+{
+    reconnector *next;
+    reconnector *prev;
+    adb_thread_t reconnect_thread;
+    int reconnect_bail;
+    char serial[HOSTLEN];
+};
+
+reconnector reconnector_list = {
+    .next = &reconnector_list,
+    .prev = &reconnector_list,
+    .serial = "LIST HEAD",
+};
+
+ADB_MUTEX_DEFINE( reconnect_lock );
+
+void reconnect_device(reconnector *recon);
+
+void dump_reconnector()
+{
+    reconnector *cur_recon;
+    D("-------------------------------\n");
+    adb_mutex_lock(&reconnect_lock);
+    cur_recon = reconnector_list.next;
+    while(cur_recon != &reconnector_list) {
+        D("reconnector looping %s\n", cur_recon->serial);
+        D("prev %s, next %s, bail %d\n", cur_recon->prev->serial, cur_recon->next->serial, cur_recon->reconnect_bail);
+        cur_recon = cur_recon->next;
+    }
+    adb_mutex_unlock(&reconnect_lock);
+    D("-------------------------------\n");
+}
+
+reconnector *alloc_reconnector()
+{
+    reconnector *recon;
+    recon = calloc(1, sizeof(reconnector));
+    if(recon) {
+        adb_mutex_lock(&reconnect_lock);
+        recon->prev = reconnector_list.prev;
+        recon->next = reconnector_list.prev->next;
+        reconnector_list.prev->next = recon;
+        reconnector_list.prev = recon;
+        adb_mutex_unlock(&reconnect_lock);
+    }
+    return recon;
+}
+
+reconnector *find_reconnector(char *serial)
+{
+    reconnector *cur_recon;
+    adb_mutex_lock(&reconnect_lock);
+    cur_recon = reconnector_list.next;
+    D("looking for %s\n", serial);
+    while(cur_recon != &reconnector_list) {
+        D("reconnector looping %s\n", cur_recon->serial);
+        if(!strncmp(serial, cur_recon->serial, strlen(serial))) {
+            D("found it!\n");
+            adb_mutex_unlock(&reconnect_lock);
+            return cur_recon;
+        }
+        cur_recon = cur_recon->next;
+    }
+    adb_mutex_unlock(&reconnect_lock);
+    return 0;
+}
+
+void remove_reconnector(reconnector *recon)
+{
+    reconnector *cur_recon;
+    reconnector *next_recon;
+    adb_mutex_lock(&reconnect_lock);
+    cur_recon = reconnector_list.next;
+    while(cur_recon != &reconnector_list) {
+        D("reconnector looping %s\n", cur_recon->serial);
+        if(cur_recon == recon) {
+            D("found it\n");
+            next_recon = cur_recon->next;
+            cur_recon->prev->next = cur_recon->next;
+            cur_recon->next->prev = cur_recon->prev;
+            free(cur_recon);
+            cur_recon = next_recon;
+            break;
+        }
+        cur_recon = cur_recon->next;
+    } while(cur_recon != &reconnector_list);
+    adb_mutex_unlock(&reconnect_lock);
+}
+
+void remove_all_reconnectors(void)
+{
+    reconnector *cur_recon;
+
+    adb_mutex_lock(&reconnect_lock);
+    cur_recon = reconnector_list.next;
+    while(cur_recon != &reconnector_list) {
+        cur_recon->reconnect_bail = 1;
+        cur_recon = cur_recon->next;
+    }
+    adb_mutex_unlock(&reconnect_lock);
+}
+
+void list_reconnects(char *outbuf, int outlen)
+{
+    int len;
+    int remaining = outlen;
+    reconnector *cur_recon;
+
+    adb_mutex_lock(&reconnect_lock);
+    cur_recon = reconnector_list.next;
+    while((cur_recon != &reconnector_list) && (remaining > 0)) {
+        len = snprintf(outbuf, remaining, "%-22s  reconnecting\n", cur_recon->serial);
+        remaining -= len;
+        outbuf += len;
+        cur_recon = cur_recon->next;
+    }
+    adb_mutex_unlock(&reconnect_lock);
+}
+#endif
+
 void handle_packet(apacket *p, atransport *t)
 {
     asocket *s;
@@ -510,6 +639,19 @@ void handle_packet(apacket *p, atransport *t)
             t->connection_state = CS_OFFLINE;
             handle_offline(t);
             send_packet(p, t);
+#if ADB_HOST
+            /* The devpath is null for TCP connections */
+            if(!t->devpath) {
+                reconnector *recon;
+                recon = alloc_reconnector();
+                if(recon) {
+                    strncpy(recon->serial, t->serial, HOSTLEN-1);
+                    reconnect_device(recon);
+                } else {
+                    D("failed to allocate reconnector");
+                }
+            }
+#endif
         }
         return;
 
@@ -1244,7 +1386,45 @@ int adb_main(int is_daemon, int server_port)
 }
 
 #if ADB_HOST
-void connect_device(char* host, char* buffer, int buffer_size)
+
+#define ERRLEN 100
+char errbuf[ERRLEN];
+
+int connect_device(char* host, char* buffer, int buffer_size);
+
+static void *reconnect_thread(void *vrecon)
+{
+    reconnector *recon = vrecon;
+    while(1) {
+        sleep(2);
+        if(recon->reconnect_bail) {
+            D("reconnect bail\n");
+            break;
+        }
+        D("trying to reconnect to %s\n", recon->serial);
+        errbuf[0] = '\0';
+        if(connect_device(recon->serial, errbuf, ERRLEN) > 0) {
+            D("reconnect success: %s\n", errbuf);
+            break;
+        } else {
+            D("reconnect failed: %s\n", errbuf);
+        }
+    }
+
+    D("exiting reconnect thread\n");
+    remove_reconnector(recon);
+    return 0;
+}
+
+void reconnect_device(reconnector *recon)
+{
+    recon->reconnect_bail = 0;
+    D("creating reconnect thread\n");
+    adb_thread_create(&recon->reconnect_thread, reconnect_thread, recon);
+}
+
+
+int connect_device(char* host, char* buffer, int buffer_size)
 {
     int port, fd;
     char* portstr = strchr(host, ':');
@@ -1255,13 +1435,13 @@ void connect_device(char* host, char* buffer, int buffer_size)
     if (portstr) {
         if (portstr - host >= (ptrdiff_t)sizeof(hostbuf)) {
             snprintf(buffer, buffer_size, "bad host name %s", host);
-            return;
+            return 0;
         }
         // zero terminate the host at the point we found the colon
         hostbuf[portstr - host] = 0;
         if (sscanf(portstr + 1, "%d", &port) == 0) {
             snprintf(buffer, buffer_size, "bad port number %s", portstr);
-            return;
+            return 0;
         }
     } else {
         port = DEFAULT_ADB_LOCAL_TRANSPORT_PORT;
@@ -1270,20 +1450,22 @@ void connect_device(char* host, char* buffer, int buffer_size)
     snprintf(serial, sizeof(serial), "%s:%d", hostbuf, port);
     if (find_transport(serial)) {
         snprintf(buffer, buffer_size, "already connected to %s", serial);
-        return;
+        return 0;
     }
 
     fd = socket_network_client(hostbuf, port, SOCK_STREAM);
     if (fd < 0) {
-        snprintf(buffer, buffer_size, "unable to connect to %s:%d", host, port);
-        return;
+        snprintf(buffer, buffer_size, "unable to connect to %s:%d", hostbuf, port);
+        return 0;
     }
 
     D("client: connected on remote on fd %d\n", fd);
     close_on_exec(fd);
     disable_tcp_nagle(fd);
+    enable_keepalive(fd);
     register_socket_transport(fd, serial, port, 0);
     snprintf(buffer, buffer_size, "connected to %s", serial);
+    return 1;
 }
 
 void connect_emulator(char* port_spec, char* buffer, int buffer_size)
@@ -1395,6 +1577,7 @@ int handle_host_request(char *service, transport_type ttype, char* serial, int r
             memset(buffer, 0, sizeof(buffer));
             D("Getting device list \n");
             list_transports(buffer, sizeof(buffer), use_long);
+            list_reconnects(buffer+strlen(buffer), sizeof(buffer)-strlen(buffer));
             snprintf(buf, sizeof(buf), "OKAY%04x%s",(unsigned)strlen(buffer),buffer);
             D("Wrote device list \n");
             writex(reply_fd, buf, strlen(buf));
@@ -1405,8 +1588,14 @@ int handle_host_request(char *service, transport_type ttype, char* serial, int r
     // add a new TCP transport, device or emulator
     if (!strncmp(service, "connect:", 8)) {
         char buffer[4096];
+        reconnector *recon;
         char* host = service + 8;
+        recon = find_reconnector(host);
+        /* if we're already reconnecting, skip the connection and just
+           keep reconnecting */
+        if(recon) sendfailmsg(reply_fd, "already reconnecting");
         if (!strncmp(host, "emu:", 4)) {
+
             connect_emulator(host + 4, buffer, sizeof(buffer));
         } else {
             connect_device(host, buffer, sizeof(buffer));
@@ -1420,9 +1609,11 @@ int handle_host_request(char *service, transport_type ttype, char* serial, int r
     // remove TCP transport
     if (!strncmp(service, "disconnect:", 11)) {
         char buffer[4096];
+        reconnector *recon;
         memset(buffer, 0, sizeof(buffer));
         char* serial = service + 11;
         if (serial[0] == 0) {
+            remove_all_reconnectors();
             // disconnect from all TCP devices
             unregister_all_tcp_transports();
         } else {
@@ -1432,6 +1623,8 @@ int handle_host_request(char *service, transport_type ttype, char* serial, int r
                 snprintf(hostbuf, sizeof(hostbuf) - 1, "%s:5555", serial);
                 serial = hostbuf;
             }
+            recon = find_reconnector(hostbuf);
+            if(recon) recon->reconnect_bail = 1;
             atransport *t = find_transport(serial);
 
             if (t) {

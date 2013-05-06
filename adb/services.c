@@ -410,7 +410,10 @@ int service_to_fd(const char *name)
         if(name == 0) {
             ret = socket_loopback_client(port, SOCK_STREAM);
             if (ret >= 0)
+            {
                 disable_tcp_nagle(ret);
+                enable_keepalive(ret);
+            }
         } else {
 #if ADB_HOST
             adb_mutex_lock(&dns_lock);
