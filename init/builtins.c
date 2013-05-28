@@ -380,6 +380,53 @@ int do_hostname(int nargs, char **args)
     return write_file("/proc/sys/kernel/hostname", args[1]);
 }
 
+int do_ifconfig(int nargs, char **args)
+{
+    struct ifreq ifr;
+    int sockfd, rc = 0;
+    struct sockaddr_in *addr;
+
+    sockfd = socket(AF_INET, SOCK_DGRAM, 0);
+    if (sockfd < 0) {
+        return -1;
+    }
+
+    /* Initialize ifreq structure */
+    memset(&ifr, 0, sizeof(struct ifreq));
+    ifr.ifr_addr.sa_family = AF_INET;
+    addr = (struct sockaddr_in *)&ifr.ifr_addr;
+
+    /* Set interface */
+    strncpy(ifr.ifr_name, args[1], IFNAMSIZ);
+
+    /* Set IP address */
+    if (inet_pton(AF_INET, args[2], &addr->sin_addr) <= 0) {
+        rc = -1;
+        ERROR("ifconfig: Invalid IP address");
+        goto done;
+    }
+    rc = ioctl(sockfd, SIOCSIFADDR, &ifr);
+    if (rc) {
+        ERROR("ifconfig: Cannot set address");
+        goto done;
+    }
+
+    /* Set netmask */
+    if (inet_pton(AF_INET, args[3], &addr->sin_addr) <= 0) {
+        rc = -1;
+        ERROR("ifconfig: Invalid netmask");
+        goto done;
+    }
+    rc = ioctl(sockfd, SIOCSIFNETMASK, &ifr);
+    if (rc) {
+        ERROR("ifconfig: Cannot set netmask");
+    }
+
+done:
+    close(sockfd);
+    return rc;
+}
+
 int do_ifup(int nargs, char **args)
 {
     return __ifupdown(args[1], 1);

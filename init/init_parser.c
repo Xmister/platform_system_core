@@ -112,6 +112,7 @@ int lookup_keyword(const char *s)
         break;
     case 'i':
         if (!strcmp(s, "oprio")) return K_ioprio;
+        if (!strcmp(s, "fconfig")) return K_ifconfig;
         if (!strcmp(s, "fup")) return K_ifup;
         if (!strcmp(s, "nsmod")) return K_insmod;
         if (!strcmp(s, "mport")) return K_import;
