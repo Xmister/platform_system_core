@@ -100,14 +100,24 @@ static int have_console;
 static char *console_name = "/dev/console";
 static time_t process_needs_restart;
 
-static const char *ENV[32];
+static const char *ENV[128];
 
 /* add_environment - add "key=value" to the current environment */
 int add_environment(const char *key, const char *val)
 {
-    int n;
+    unsigned int n, kesz;
+    char keyeq[128];
+    int max_vars = sizeof(ENV)/sizeof(ENV[0]) - 1; /* final null for execve */
 
-    for (n = 0; n < 31; n++) {
+    snprintf(keyeq, sizeof(keyeq), "%s=", key);
+    kesz = strlen(keyeq);
+
+    for (n = 0; n < max_vars; n++) {
+        if (ENV[n] && strncmp(ENV[n], keyeq, kesz) == 0) {
+            /* Override */
+            free((char*)ENV[n]);
+            ENV[n] = NULL;
+        }
         if (!ENV[n]) {
             size_t len = strlen(key) + strlen(val) + 2;
             char *entry = malloc(len);
