@@ -10,6 +10,7 @@ int do_domainname(int nargs, char **args);
 int do_exec(int nargs, char **args);
 int do_export(int nargs, char **args);
 int do_hostname(int nargs, char **args);
+int do_ifconfig(int nargs, char **args);
 int do_ifup(int nargs, char **args);
 int do_insmod(int nargs, char **args);
 int do_mkdir(int nargs, char **args);
@@ -59,6 +60,7 @@ enum {
     KEYWORD(export,      COMMAND, 2, do_export)
     KEYWORD(group,       OPTION,  0, 0)
     KEYWORD(hostname,    COMMAND, 1, do_hostname)
+    KEYWORD(ifconfig,    COMMAND, 3, do_ifconfig)
     KEYWORD(ifup,        COMMAND, 1, do_ifup)
     KEYWORD(insmod,      COMMAND, 1, do_insmod)
     KEYWORD(import,      SECTION, 1, 0)
