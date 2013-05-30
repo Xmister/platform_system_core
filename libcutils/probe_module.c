@@ -32,6 +32,7 @@
 #define LDM_DEFAULT_DEP_FILE "/system/lib/modules/modules.dep"
 #define LDM_DEFAULT_MOD_PATH "/system/lib/modules/"
 #define LDM_INIT_DEP_NUM 10
+#define LDM_DEFAULT_LINE_SZ 1024
 
 extern int init_module(void *, unsigned long, const char *);
 extern int delete_module(const char *, unsigned int);
@@ -141,13 +142,16 @@ static int is_target_module(char *line, const char *target)
 /* turn a single string into an array of dependency.
  *
  * return: dependency array's address if it succeeded. Caller
- *         is responsible to free the array's memory.
+ *         is responsible to free the array's memory and also
+ *         the array items' memory.
  *         NULL when any error happens.
  */
 static char** setup_dep(char *line)
 {
-    char *tmp;
-    char *brk;
+    char *token;
+    unsigned int token_size = 0;
+    char *start;
+    char *end;
     int dep_num = LDM_INIT_DEP_NUM;
     char **new;
     int i;
@@ -159,18 +163,20 @@ static char** setup_dep(char *line)
         ALOGE("cannot alloc dep array\n");
         return dep;
     }
+    start = line;
 
-    for (i = 0, tmp = strtok_r(line, ": ", &brk);
-            tmp;
-            tmp = strtok_r(NULL, ": ", &brk), i++) {
-
+    /* All the modules are separated by space, except for the first
+     * module which also has a ':'. A normal line should look like:
+     * dependant_module.ko: dependency1.ko dependency2.ko
+     */
+    for (i = 0; (end = strchr(start, ' ')) != NULL; i++) {
+        token_size = (end - start);
+        if (token_size == 0)
+            break;
         /* check if we need enlarge dep array */
         if (!(i < dep_num - 1)) {
-
             dep_num += LDM_INIT_DEP_NUM;
-
             new = realloc(dep, dep_num);
-
             if (!new) {
                 ALOGE("failed to enlarge dep buffer\n");
                 free(dep);
@@ -179,8 +185,22 @@ static char** setup_dep(char *line)
             else
                 dep = new;
         }
+        token = (char*) malloc(sizeof(char) * (token_size + 1));
+        if (!token) {
+            ALOGE("failed to alloc dep token\n");
+            free(dep);
+            return NULL;
+        }
+        strncpy(token, start, token_size);
+        start += (token_size + 1);
+        /* If the token ends with ':', this is the module depending on the others
+         * We will insert it also, but remove the ':', first
+         */
+        if (i == 0 && token[token_size - 1] == ':')
+            token_size -= 1;
+        token[token_size] = '\0';
 
-        dep[i] = tmp;
+        dep[i] = token;
 
     }
     /* terminate array with a null pointer */
@@ -315,32 +335,52 @@ static int rmmod_s(char *dep[], unsigned int flags)
 /* look_up_dep() find and setup target module's dependency in modules.dep
  *
  * dep_file:    a pointer to module's dep file loaded in memory, its content
- *              will be CHANGED during parsing.
+ *              won't be changed, so it can be reused after parsing.
  *
  * return:      a pointer to an array which holds the dependency strings and
  *              terminated by a NULL pointer. Caller is responsible to free the
- *              array's memory.
+ *              array's memory and also the array items' memory.
  *
  *              non-zero in any other cases. Content of dep array is invalid.
  */
 static char ** look_up_dep(const char *module_name, void *dep_file)
 {
-
     char *line;
-    char *saved_pos;
+    char *new_line;
+    unsigned int line_size = 0;
     char *start;
-    int ret = -1;
+    char *end;
     char **dep = NULL;
 
     if (!dep_file || !module_name || *module_name == '\0')
         return NULL;
 
     start = (char *)dep_file;
+    line = (char *)malloc(sizeof(char) * LDM_DEFAULT_LINE_SZ);
+    if (!line) {
+        ALOGE("failed to alloc dep line buffer\n");
+        return NULL;
+    }
 
     /* We expect modules.dep file has a new line char before EOF. */
-    while ((line = strtok_r(start, "\n", &saved_pos)) != NULL) {
-
-        start = NULL;
+    while ((end = strchr(start, '\n')) != NULL) {
+        line_size = (end - start);
+        /* line_size + 1, because we will add a space at the end of line */
+        if (line_size + 1 >= LDM_DEFAULT_LINE_SZ) {
+            new_line = realloc(line, LDM_DEFAULT_LINE_SZ * 2);
+            if (!new_line) {
+                ALOGE("failed to enlarge dep line buffer\n");
+                free(line);
+                return NULL;
+            } else {
+                line = new_line;
+            }
+        }
+        strncpy(line, start, line_size);
+        /* Add a space to identify last token */
+        line[line_size] = ' ';
+        line[line_size  + 1] = '\0';
+        start += (line_size + 1);
 
         if (is_target_module(line, module_name)) {
 
@@ -349,6 +389,8 @@ static char ** look_up_dep(const char *module_name, void *dep_file)
             break;
         }
     }
+
+    free(line);
 
     return dep;
 }
@@ -447,11 +489,14 @@ int insmod_by_dep(const char *module_name,
 {
     void *dep_file = NULL;
     char **dep = NULL;
-    char *mod_name = NULL;
     int ret = MOD_UNKNOWN;
+    int i = 0;
+    struct listnode *alias_node;
+    struct module_alias_node *alias;
     list_declare(base_blacklist);
     list_declare(extra_blacklist);
     list_declare(alias_list);
+    list_declare(module_aliases);
 
     if (!module_name || *module_name == '\0') {
         ALOGE("need valid module name\n");
@@ -497,39 +542,69 @@ int insmod_by_dep(const char *module_name,
     }
 
     /* check if module name is an alias. */
-    if (!get_module_name_from_alias(module_name, &mod_name, &alias_list))
-        module_name = mod_name;
-
-    dep = look_up_dep(module_name, dep_file);
-
-    if (!dep) {
-        ALOGE("%s: cannot find module's dependency info: [%s]\n", __FUNCTION__, module_name);
-        ret = MOD_DEP_NOT_FOUND;
-
-        goto free_file;
+    if (get_module_name_from_alias(module_name, &module_aliases, &alias_list) <= 0) {
+        /* If no alias found, put a single node in list containing module_name, so it will
+         * be processed in the loop below. This is done for simplifying the code. */
+        alias = calloc(1, sizeof(*alias));
+        if (!alias) {
+            ret = MOD_BAD_ALIAS;
+            goto free_file;
+        }
+        alias->name = strdup(module_name);
+        if (!alias->name) {
+            free(alias);
+            ret = MOD_BAD_ALIAS;
+            goto free_file;
+        }
+        list_add_tail(&module_aliases, &alias->list);
     }
 
-    if (is_dep_in_blacklist(dep, &extra_blacklist)) {
-        ALOGE("%s: a module is in caller's black list, stop further loading\n", __FUNCTION__);
-        ret = MOD_IN_CALLER_BLACK;
+    list_for_each(alias_node, &module_aliases) {
+        alias = node_to_item(alias_node, struct module_alias_node, list);
+        /* Before looking for deps, check if we have previous deps, because we need to free them */
+        if (dep) {
+            for (i = 0; dep[i]; i++) {
+                free(dep[i]);
+            }
+            free(dep);
+            dep = NULL;
+        }
+        dep = look_up_dep(alias->name, dep_file);
 
-        goto free_file;
+        if (!dep) {
+            ALOGE("%s: cannot find module's dependency info: [%s]\n", __FUNCTION__, alias->name);
+            ret = MOD_DEP_NOT_FOUND;
+            continue;
+        }
+
+        if (is_dep_in_blacklist(dep, &extra_blacklist)) {
+            ALOGE("%s: a module is in caller's black list, stop further loading\n", __FUNCTION__);
+            ret = MOD_IN_CALLER_BLACK;
+            continue;
+        }
+
+        if (is_dep_in_blacklist(dep, &base_blacklist)) {
+            ALOGE("%s: a module is in system black list, stop further loading\n", __FUNCTION__);
+            ret = MOD_IN_BLACK;
+            continue;
+        }
+
+        if (ret) /* if we reach here for a dep, update ret to the latest result */
+            ret = insmod_s(dep, args, strip, base);
+        else /* we have had a successfull loading, ignore further errors */
+            insmod_s(dep, args, strip, base);
     }
-
-    if (is_dep_in_blacklist(dep, &base_blacklist)) {
-        ALOGE("%s: a module is in system black list, stop further loading\n", __FUNCTION__);
-        ret = MOD_IN_BLACK;
-
-        goto free_file;
-    }
-
-    ret = insmod_s(dep, args, strip, base);
 
 free_file:
-    free(mod_name);
-    free(dep);
+    if (dep) {
+        for (i = 0; dep[i]; i++) {
+            free(dep[i]);
+        }
+        free(dep);
+    }
     free(dep_file);
     free_alias_list(&alias_list);
+    free_alias_list(&module_aliases);
     free_black_list(&base_blacklist);
     free_black_list(&extra_blacklist);
 

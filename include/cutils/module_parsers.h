@@ -35,11 +35,12 @@ int parse_blacklist_to_list(const char *file_name, struct listnode *head);
 void free_alias_list(struct listnode *head);
 void free_black_list(struct listnode *head);
 /* return a module's name from its alias.
- * id           : alias string passed by caller
- * name         : allocated string of module name, caller is responsible to free it.
- * alias_list   : list head of an alias map. The map is a list of struct module_alias_node.
- * return       : 0 when module name is found and name holds the valid content.
- *              : -1 when it failed to allocate name string's memory, or the module name
- *                cannot be found in alias list. Content of name is NULL.
+ * id             : alias string passed by caller
+ * module_aliases : list head of a list where the matched aliases will be put.
+ * alias_list     : list head of an alias map. The map is a list of struct module_alias_node.
+ * return         : 0 when no matching alias was found.
+ *                : the number of matching aliases when module name is found and name holds the valid
+ *                  content.
+ *                : -1 when it failed to allocate name string's memory, or the id is NULL.
  */
-int get_module_name_from_alias(const char *id, char **name, struct listnode *alias_list);
+int get_module_name_from_alias(const char *id, struct listnode *module_aliases, struct listnode *alias_list);
