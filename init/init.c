@@ -32,8 +32,6 @@
 #include <sys/socket.h>
 #include <sys/un.h>
 #include <sys/personality.h>
-#include <sys/ioctl.h>
-#include <sys/vt.h>
 
 #ifdef HAVE_SELINUX
 #include <selinux/selinux.h>
@@ -100,7 +98,6 @@ void notify_service_state(const char *name, const char *state)
 
 static int have_console;
 static char *console_name = "/dev/console";
-static char *active_console_name = "/dev/tty2";
 static time_t process_needs_restart;
 
 static const char *ENV[128];
@@ -146,17 +143,13 @@ static void zap_stdio(void)
 static void open_console()
 {
     int fd;
-    if ((fd = open(active_console_name, O_RDWR)) < 0) {
+    if ((fd = open(console_name, O_RDWR)) < 0) {
         fd = open("/dev/null", O_RDWR);
     }
-    ioctl(fd, VT_ACTIVATE, 2);
-    ioctl(fd, VT_WAITACTIVE, 2);
-
     ioctl(fd, TIOCSCTTY, 0);
     dup2(fd, 0);
     dup2(fd, 1);
     dup2(fd, 2);
-
     close(fd);
 }
 
@@ -220,7 +213,6 @@ void service_start(struct service *svc, const char *dynamic_args)
         svc->flags |= SVC_DISABLED;
         return;
     }
-
 
 #ifdef HAVE_SELINUX
     if (is_selinux_enabled() > 0) {
@@ -635,7 +627,7 @@ static int console_init_action(int nargs, char **args)
 
     /* Block the boot until the console node comes up */
     while (1) {
-        fd = open(active_console_name, O_WRONLY);
+        fd = open(console_name, O_WRONLY);
         if (fd < 0 && count--)
             usleep(SLEEP_MS * 1000);
         else
