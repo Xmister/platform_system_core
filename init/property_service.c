@@ -578,7 +578,7 @@ static void dmi_detect_props(void)
 
     /* Skip if disabled */
     var = property_get("ro.boot.dmi_detect");
-    if(var && strcmp(var, "0"))
+    if(var && !strcmp(var, "0"))
         return;
 
     /* Fail silently (no error) on devices without DMI */
