@@ -209,31 +209,44 @@ void free_black_list(struct listnode *head)
     }
 }
 
-int get_module_name_from_alias(const char *id, char **name, struct listnode *alias_list)
+int get_module_name_from_alias(const char *id, struct listnode *module_aliases, struct listnode *alias_list)
 {
     struct listnode *alias_node;
     struct module_alias_node *alias;
-    int ret = -1;
+    struct module_alias_node *node;
+    int num = 0;
 
     if (!id)
-        return ret;
+        return -1;
 
     list_for_each(alias_node, alias_list)
     {
         alias = node_to_item(alias_node, struct module_alias_node, list);
         if (alias && alias->name && alias->pattern) {
             if (fnmatch(alias->pattern, id, 0) == 0) {
-                if (asprintf(name, "%s", alias->name) < 0)
-                    *name = NULL;
-                else
-                    ret = 0;
-
-                break;
+                node = calloc(1, sizeof(*node));
+                if (!node) {
+                    num = -1;
+                    break;
+                }
+                node->name = strdup(alias->name);
+                if (!node->name) {
+                    free(node);
+                    num = -1;
+                    break;
+                }
+                list_add_tail(module_aliases, &node->list);
+                num++;
             }
         }
     }
 
-    return ret;
+    if (num < 0) {
+        /* In case of an error, free existing aliases in the list */
+        free_alias_list(module_aliases);
+    }
+
+    return num;
 }
 
 int is_module_blacklisted(const char *name, struct listnode *black_list_head)
