@@ -52,11 +52,30 @@ static void import_kernel_nv(char *name, int in_qemu)
     }
 }
 
-int ueventd_main(int argc, char **argv)
+static void do_event_loop(void (*handle_event_fp)(struct uevent*)) __attribute__ ((noreturn));
+static void do_event_loop(void (*handle_event_fp)(struct uevent*))
 {
     struct pollfd ufd;
     int nr;
+
+    ufd.events = POLLIN;
+    ufd.fd = get_device_fd();
+
+    while(1) {
+        ufd.revents = 0;
+        nr = poll(&ufd, 1, -1);
+        if (nr <= 0)
+            continue;
+        if (ufd.revents == POLLIN)
+            handle_events_fd(handle_event_fp);
+    }
+}
+
+
+int ueventd_main(int argc, char **argv)
+{
     char tmp[32];
+    pid_t pid;
 
     /* kernel will launch a program in user space to load
      * modules, by default it is modprobe.
@@ -113,18 +132,25 @@ int ueventd_main(int argc, char **argv)
     snprintf(tmp, sizeof(tmp), "/ueventd.%s.rc", hardware);
     ueventd_parse_config_file(tmp);
 
-    device_init();
+    pid = fork();
 
-    ufd.events = POLLIN;
-    ufd.fd = get_device_fd();
-
-    while(1) {
-        ufd.revents = 0;
-        nr = poll(&ufd, 1, -1);
-        if (nr <= 0)
-            continue;
-        if (ufd.revents == POLLIN)
-               handle_device_fd();
+    /* We fork here because we want to process the device drivers loading
+     * independently from the device firmware loading.
+     * If we do drivers and firmware events processing in the same process we
+     * will block the driver loading because ueventd cannot load it's corresponding
+     * firmware (requested by driver).
+     */
+    if (pid < 0) {
+        ERROR("Failed to fork in ueventd!\n");
+        return -1;
+    } else if (pid > 0) {
+        /* In parent we loop for device events for loading drivers */
+        device_init();
+        do_event_loop(handle_device_event);
+    } else {
+        /* In child we loop for device events for loading firmware */
+        uevent_fd_init();
+        do_event_loop(handle_firmware_event);
     }
 }
 
