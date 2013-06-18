@@ -1593,7 +1593,10 @@ int handle_host_request(char *service, transport_type ttype, char* serial, int r
         recon = find_reconnector(host);
         /* if we're already reconnecting, skip the connection and just
            keep reconnecting */
-        if(recon) sendfailmsg(reply_fd, "already reconnecting");
+        if(recon) {
+            sendfailmsg(reply_fd, "already reconnecting");
+            return 0;
+        }
         if (!strncmp(host, "emu:", 4)) {
 
             connect_emulator(host + 4, buffer, sizeof(buffer));
