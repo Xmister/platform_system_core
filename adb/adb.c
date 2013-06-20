@@ -1453,7 +1453,7 @@ int connect_device(char* host, char* buffer, int buffer_size)
         return 0;
     }
 
-    fd = socket_network_client(hostbuf, port, SOCK_STREAM);
+    fd = socket_network_client_timeout(hostbuf, port, SOCK_STREAM, 10);
     if (fd < 0) {
         snprintf(buffer, buffer_size, "unable to connect to %s:%d", hostbuf, port);
         return 0;
